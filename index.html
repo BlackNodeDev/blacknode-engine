@@ -1,0 +1,1791 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>BlackNode Engine</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#101218">
+<meta name="description" content="BlackNode Engine: Josh's personal Godot 4.7.2 game engine editor, running in the browser.">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<script src="coi-serviceworker.js"></script>
+<script>
+// Stand-in for the Perchance runtime this page was built on.
+(function () {
+  function list(items) { return { selectAll: items.map(function (s) { return { evaluateItem: s }; }),
+    get selectOne() { return { evaluateItem: items[Math.floor(Math.random() * items.length)] }; } }; }
+  window.root = {
+    editorOrigin: new URL("engine/", location.href).href,
+    engineFiles: list(["godot.editor.js","godot.editor.audio.worklet.js","godot.editor.audio.position.worklet.js","godot.editor.wasm"]),
+    defaultVersion: "4.7.2.stable",
+    versions: list(["4.7.2.stable@4.7.2 (stable)"]),
+    superFetch: function (u, o) { return fetch(u, o); },
+    tips: list([
+      "GDScript is Python-like - a great first language for games.",
+      "Scene = a tree of Nodes. Everything in Godot is a node.",
+      "Signals are Godot's built-in event system - connect them in the editor's Node tab.",
+      "Press F5 in the editor to play your project; F6 plays the current scene.",
+      "You can preload an existing project as a ZIP on the editor's start screen.",
+      "GDScript reaches page JavaScript with JavaScriptBridge.eval(\"1+1\") - window.GodotJs helpers are ready to call."
+    ])
+  };
+})();
+</script>
+</head>
+<body>
+<style>
+  :root{
+    --bg:#101218; --bg2:#161922; --panel:#1d212b; --panel2:#242a36;
+    --line:#2c3341; --line2:#3a4252;
+    --text:#e7eaf0; --muted:#98a2b6; --dim:#6f7a8d;
+    --accent:#478cbf; --accent2:#63b0e8; --accentGlow:rgba(71,140,191,.35);
+    --ok:#4ec9a0; --bad:#e0605c; --warn:#e0b35c;
+  }
+  html{ color-scheme:dark; }
+  body{
+    margin:0; height:100dvh; overflow:hidden; text-align:left;
+    background:var(--bg); color:var(--text);
+    font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:14px; -webkit-font-smoothing:antialiased;
+  }
+  a{ color:var(--accent2); text-decoration:none; }
+  a:hover{ text-decoration:underline; }
+  *{ scrollbar-width:thin; scrollbar-color:#39424f transparent; }
+  ::-webkit-scrollbar{ width:10px; height:10px; }
+  ::-webkit-scrollbar-thumb{ background:#39424f; border-radius:6px; border:2px solid var(--bg); }
+  ::-webkit-scrollbar-thumb:hover{ background:#48535f; }
+  ::-webkit-scrollbar-track{ background:transparent; }
+
+  .app{ position:fixed; inset:0; display:flex; flex-direction:column; background:var(--bg); }
+  body.zen .topbar, body.zen .statusbar{ display:none; }
+
+  /* ---------- top bar ---------- */
+  .topbar{
+    flex:0 0 auto; display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    padding:9px 14px; background:linear-gradient(180deg,#222836,#1b202b);
+    border-bottom:1px solid var(--line); box-shadow:0 1px 0 rgba(0,0,0,.4); z-index:20;
+  }
+  .brand{ display:flex; align-items:center; gap:10px; cursor:pointer; background:none; border:0; padding:2px 4px; border-radius:8px; }
+  .brand:hover{ background:rgba(255,255,255,.05); }
+  .brand img{ height:20px; width:auto; display:block; }
+  .brand .sub{ color:var(--dim); font-size:12px; letter-spacing:.06em; text-transform:uppercase; padding-left:8px; border-left:1px solid var(--line2); }
+  .spacer{ flex:1 1 auto; }
+  .ctl{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .field{ display:flex; align-items:center; gap:6px; color:var(--muted); font-size:12px; }
+  select{
+    appearance:none; background:var(--panel2) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%2398a2b6'/></svg>") no-repeat right 8px center;
+    color:var(--text); border:1px solid var(--line2); border-radius:7px; padding:6px 26px 6px 9px; font:inherit; font-size:13px; cursor:pointer;
+  }
+  select:hover{ border-color:#4b5568; }
+  .btn{
+    appearance:none; background:var(--panel2); color:var(--text); border:1px solid var(--line2);
+    border-radius:7px; padding:6px 11px; font:inherit; font-size:13px; cursor:pointer;
+    display:inline-flex; align-items:center; gap:6px; line-height:1.2; text-decoration:none;
+  }
+  .btn:hover{ background:#2c3443; border-color:#4b5568; text-decoration:none; }
+  .btn:disabled{ opacity:.4; cursor:default; }
+  .btn .ico{ font-size:13px; opacity:.9; }
+  .btnPrimary{
+    background:linear-gradient(180deg,var(--accent2),var(--accent)); border-color:#3d7aa6; color:#08131c;
+    font-weight:700; box-shadow:0 2px 14px var(--accentGlow);
+  }
+  .btnPrimary:hover{ filter:brightness(1.1); background:linear-gradient(180deg,var(--accent2),var(--accent)); }
+  .btnBig{ padding:11px 20px; font-size:15px; border-radius:9px; }
+
+  /* ---------- stage ---------- */
+  .stage{ position:relative; flex:1 1 auto; min-height:0; }
+  .home{ position:absolute; inset:0; overflow:auto; }
+  .homeInner{
+    max-width:1080px; margin:0 auto; padding:34px 22px 60px;
+    display:grid; grid-template-columns:minmax(0,1.15fr) minmax(280px,.85fr); gap:34px; align-items:start;
+  }
+  @media (max-width:820px){ .homeInner{ grid-template-columns:1fr; gap:26px; padding-top:24px; } }
+
+  .hero{ position:relative; }
+  .heroLogo{ width:min(360px,74%); height:auto; display:block; margin:4px 0 18px; filter:drop-shadow(0 6px 26px rgba(71,140,191,.28)); }
+  .eyebrow{ margin:0; color:var(--accent2); font-size:12px; font-weight:700; letter-spacing:.16em; text-transform:uppercase; }
+  h1{ margin:6px 0 10px; font-size:clamp(24px,3.4vw,36px); line-height:1.14; letter-spacing:-.01em; }
+  .lede{ margin:0 0 22px; color:var(--muted); font-size:15px; line-height:1.6; max-width:46ch; }
+  .cta{ display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+  .autoRow{ display:flex; align-items:center; gap:8px; margin-top:16px; color:var(--muted); font-size:12.5px; cursor:pointer; user-select:none; }
+  .autoRow input{ accent-color:var(--accent); width:15px; height:15px; }
+  .fine{ margin:16px 0 0; color:var(--dim); font-size:12px; line-height:1.55; max-width:52ch; }
+  .fine b{ color:var(--muted); }
+
+  .side{ display:flex; flex-direction:column; gap:16px; }
+  .card{ background:linear-gradient(180deg,var(--panel),#1a1e27); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
+  .card h2{ margin:0 0 12px; font-size:12px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); font-weight:700; }
+  .checkList{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:9px; }
+  .checkList li{ display:flex; align-items:flex-start; gap:9px; font-size:13px; line-height:1.35; }
+  .dot{ flex:0 0 auto; width:16px; height:16px; border-radius:50%; display:grid; place-items:center; font-size:10px; font-weight:900; margin-top:1px; }
+  .dot.ok{ background:rgba(78,201,160,.16); color:var(--ok); border:1px solid rgba(78,201,160,.4); }
+  .dot.bad{ background:rgba(224,96,92,.16); color:var(--bad); border:1px solid rgba(224,96,92,.4); }
+  .dot.warn{ background:rgba(224,179,92,.16); color:var(--warn); border:1px solid rgba(224,179,92,.4); }
+  .checkList .why{ color:var(--dim); font-size:11.5px; }
+  .verdict{ margin:13px 0 0; font-size:12.5px; line-height:1.5; }
+  .verdict.ok{ color:var(--ok); } .verdict.bad{ color:var(--bad); } .verdict.warn{ color:var(--warn); }
+  .bullets{ margin:0; padding-left:17px; color:var(--muted); font-size:13px; line-height:1.65; }
+  .bullets li{ margin-bottom:5px; }
+  .tinyLinks{ margin-top:14px; display:flex; gap:14px; flex-wrap:wrap; font-size:12px; }
+  .unstyled{ background:none; border:0; color:var(--dim); font:inherit; cursor:pointer; padding:0; text-decoration:underline; }
+  .unstyled:hover{ color:var(--accent2); }
+
+  /* ---------- editor ---------- */
+  .editorPane{ position:absolute; inset:0; background:#141414; }
+  .canvasWrap{ position:absolute; inset:0; overflow:hidden; }
+  .canvasWrap canvas{ display:block; width:100%; height:100%; outline:none; touch-action:none; background:#141414; }
+  .canvasWrap[hidden]{ display:none; }
+
+  .tabBar{
+    position:absolute; top:0; left:0; z-index:12; display:flex; align-items:flex-start; gap:6px; padding:6px 8px;
+  }
+  .tabBar[hidden]{ display:none; }
+  .tabBtn{
+    appearance:none; border:1px solid transparent; background:rgba(30,34,44,.82); color:var(--muted);
+    font:inherit; font-size:12.5px; padding:5px 12px; border-radius:6px 6px 0 0; cursor:pointer; backdrop-filter:blur(4px);
+  }
+  .tabBtn:hover{ color:var(--text); background:rgba(46,53,68,.9); }
+  .tabBtn.active{ color:var(--text); background:#1e222c; border-color:var(--line2); border-bottom-color:transparent; }
+  .tabBtn:disabled{ opacity:.4; cursor:default; }
+  .tabClose{
+    appearance:none; border:1px solid transparent; background:rgba(30,34,44,.82); color:var(--muted);
+    font:inherit; font-size:13px; font-weight:700; line-height:1; padding:5px 9px; border-radius:0 6px 0 0; cursor:pointer;
+  }
+  .tabClose:hover{ color:#fff; background:#8a3b39; }
+
+  .overlay{
+    position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px;
+    background:radial-gradient(60% 60% at 50% 40%,#1c2330,#0e1015); z-index:15; padding:24px; text-align:center;
+  }
+  .overlay[hidden]{ display:none; }
+  .spinner{ width:52px; height:52px; border-radius:50%; border:3px solid rgba(255,255,255,.1); border-top-color:var(--accent2); animation:spin 1s linear infinite; }
+  .spinner[hidden]{ display:none; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+  .overlayTitle{ font-size:16px; font-weight:700; }
+  .overlaySub{ color:var(--muted); font-size:13px; max-width:46ch; line-height:1.5; }
+  .progressWrap{
+    width:min(440px,78vw); height:8px; border-radius:6px; overflow:hidden;
+    background:rgba(255,255,255,.07); border:1px solid var(--line);
+  }
+  .progressWrap[hidden]{ display:none; }
+  .progressBar{ height:100%; width:0%; background:linear-gradient(90deg,var(--accent),var(--accent2)); transition:width .25s linear; }
+  .progressBar.indet{ width:38%; animation:slide 1.15s ease-in-out infinite; }
+  @keyframes slide{ 0%{ margin-left:-38%; } 100%{ margin-left:100%; } }
+  .ovNotice{ max-width:56ch; color:var(--muted); font-size:13px; line-height:1.55; }
+  .ovNotice[hidden]{ display:none; }
+  .ovNotice .errTitle{ color:var(--bad); font-weight:700; margin:0 0 6px; }
+  .ovNotice p{ margin:0 0 8px; }
+
+  /* ---------- status bar ---------- */
+  .statusbar{
+    flex:0 0 auto; display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+    padding:7px 14px; background:#171b24; border-top:1px solid var(--line); color:var(--dim); font-size:11.5px;
+  }
+  .statusbar .chip{ display:inline-flex; align-items:center; gap:5px; }
+  .statusbar .chip .dot{ width:9px; height:9px; margin:0; font-size:0; }
+  .statusbar .sep{ opacity:.4; }
+  .statusbar .right{ margin-left:auto; display:flex; gap:12px; flex-wrap:wrap; }
+  html,body{ overscroll-behavior:none; }
+  .app{ padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px); }
+  .menuBtn{ display:none; }
+  #kbHack{ position:fixed; bottom:2px; left:2px; width:4px; height:4px; opacity:.01; border:0; padding:0; font-size:16px; }
+  @media (max-width:720px){
+    body{ font-size:14px; }
+    .topbar{ gap:6px; padding:8px 10px; padding-top:calc(8px + env(safe-area-inset-top,0px)); }
+    .brand .sub{ display:none; }
+    .menuBtn{ display:inline-flex; }
+    .ctl{ display:none; width:100%; flex-basis:100%; gap:8px; }
+    body.navOpen .ctl{ display:flex; }
+    .ctl .btn,.ctl select{ min-height:40px; }
+    .ctl .field{ width:100%; }
+    .ctl select{ flex:1; }
+    .btn,.tabBtn{ min-height:40px; }
+    .homeInner{ padding:22px 14px 48px; }
+    .cta .btn{ flex:1 1 auto; justify-content:center; }
+    .tabBar{ gap:8px; padding:8px; max-width:100vw; overflow-x:auto; }
+    .tabBtn{ font-size:14px; padding:9px 16px; }
+    .statusbar{ font-size:11px; gap:8px; }
+    .statusbar .hideM{ display:none; }
+  }
+  @media (pointer:coarse){
+    .btn,.tabBtn,select{ min-height:40px; }
+    .canvasWrap canvas{ touch-action:none; }
+  }
+</style>
+
+<div id="appEl" class="app">
+  <header class="topbar">
+    <button id="brandBtn" class="brand" title="Back to the start screen">
+      <img src="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20xmlns%3Axlink%3D%22http%3A%2F%2Fwww.w3.org%2F1999%2Fxlink%22%20xml%3Aspace%3D%22preserve%22%20width%3D%221024%22%20height%3D%22414%22%20viewBox%3D%220%200%20960%20388.125%22%3E%3Cdefs%3E%3CclipPath%20id%3D%22a%22%20clipPathUnits%3D%22userSpaceOnUse%22%3E%3Cpath%20d%3D%22M%200%2C595.276%20H%20841.89%20V%200%20H%200%20Z%22%2F%3E%3C%2FclipPath%3E%3C%2Fdefs%3E%3Cg%20clip-path%3D%22url(%23a)%22%20transform%3D%22matrix(1.25%200%200%20-1.25%20-94.25%20597.499)%22%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22m%200%2C0%20c%20-3.611%2C0%20-6.636%2C-1.659%20-9.09%2C-4.967%20-2.441%2C-3.311%20-3.668%2C-7.958%20-3.668%2C-13.938%200%2C-5.993%201.166%2C-10.581%203.503%2C-13.778%202.333%2C-3.207%205.398%2C-4.804%209.2%2C-4.804%203.8%2C0%206.887%2C1.617%209.258%2C4.862%202.371%2C3.233%203.559%2C7.861%203.559%2C13.886%200%2C6.02%20-1.227%2C10.654%20-3.673%2C13.89%20C%206.646%2C-1.617%203.616%2C0%200%2C0%20m%20-0.055%2C-59.493%20c%20-10.573%2C0%20-19.195%2C3.46%20-25.859%2C10.379%20-6.655%2C6.925%20-9.984%2C17.03%20-9.984%2C30.314%200%2C13.292%203.367%2C23.356%2010.101%2C30.209%206.736%2C6.844%2015.431%2C10.269%2026.082%2C10.269%2010.649%2C0%2019.251%2C-3.363%2025.794%2C-10.109%206.555%2C-6.733%209.827%2C-16.94%209.827%2C-30.591%200%2C-13.661%20-3.348%2C-23.822%20-10.05%2C-30.49%20-6.702%2C-6.654%20-15.333%2C-9.981%20-25.911%2C-9.981%22%20transform%3D%22translate(531.45%20355.316)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22m%200%2C0%20v%20-33.768%20c%200%2C-1.577%200.116%2C-2.571%200.342%2C-2.988%200.224%2C-0.415%200.903%2C-0.623%202.029%2C-0.623%204.144%2C0%207.283%2C1.548%209.429%2C4.634%202.151%2C3.083%203.215%2C8.216%203.215%2C15.405%200%2C7.192%20-1.113%2C11.878%20-3.325%2C14.055%20C%209.467%2C-1.102%205.946%2C0%201.129%2C0%20Z%20m%20-21.675%2C-52.392%20v%2067.735%20c%200%2C1.883%200.468%2C3.369%201.413%2C4.471%200.939%2C1.085%202.161%2C1.636%203.671%2C1.636%20H%202.263%20c%2011.965%2C0%2021.053%2C-3.018%2027.257%2C-9.04%206.215%2C-6.02%209.322%2C-15.499%209.322%2C-28.447%200%2C-27.7%20-11.821%2C-41.547%20-35.456%2C-41.547%20h%20-19.302%20c%20-3.836%2C0%20-5.759%2C1.727%20-5.759%2C5.192%22%20transform%3D%22translate(607.851%20354.431)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22m%200%2C0%20c%20-3.612%2C0%20-6.645%2C-1.659%20-9.095%2C-4.967%20-2.44%2C-3.311%20-3.662%2C-7.958%20-3.662%2C-13.938%200%2C-5.993%201.169%2C-10.581%203.499%2C-13.778%202.33%2C-3.207%205.398%2C-4.804%209.2%2C-4.804%203.801%2C0%206.89%2C1.617%209.258%2C4.862%202.372%2C3.233%203.56%2C7.861%203.56%2C13.886%200%2C6.02%20-1.225%2C10.654%20-3.671%2C13.89%20C%206.642%2C-1.617%203.616%2C0%200%2C0%20m%20-0.058%2C-59.493%20c%20-10.577%2C0%20-19.193%2C3.46%20-25.851%2C10.379%20-6.663%2C6.925%20-9.993%2C17.03%20-9.993%2C30.314%200%2C13.292%203.367%2C23.356%2010.1%2C30.209%206.741%2C6.844%2015.431%2C10.269%2026.086%2C10.269%2010.651%2C0%2019.246%2C-3.363%2025.797%2C-10.109%206.55%2C-6.733%209.822%2C-16.94%209.822%2C-30.591%200%2C-13.661%20-3.349%2C-23.822%20-10.05%2C-30.49%20-6.699%2C-6.654%20-15.338%2C-9.981%20-25.911%2C-9.981%22%20transform%3D%22translate(700.81%20355.316)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22m%200%2C0%20c%200%2C-1.496%20-3.721%2C-2.255%20-11.176%2C-2.255%20-7.448%2C0%20-11.18%2C0.759%20-11.18%2C2.255%20v%2056.681%20h%20-13.545%20c%20-1.281%2C0%20-2.185%2C1.727%20-2.71%2C5.198%20-0.226%2C1.652%20-0.334%2C3.343%20-0.334%2C5.077%200%2C1.724%200.108%2C3.422%200.334%2C5.077%200.525%2C3.462%201.429%2C5.202%202.71%2C5.202%20h%2049.112%20c%201.279%2C0%202.179%2C-1.74%202.712%2C-5.202%200.221%2C-1.655%200.335%2C-3.353%200.335%2C-5.077%200%2C-1.734%20-0.114%2C-3.425%20-0.335%2C-5.077%20C%2015.39%2C58.408%2014.49%2C56.681%2013.211%2C56.681%20H%200%20Z%22%20transform%3D%22translate(789.011%20291.335)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22m%200%2C0%20c%20-6.078%2C0.094%20-13.034%2C-1.173%20-13.034%2C-1.173%20v%20-11.863%20h%206.995%20l%20-0.078%2C-5.288%20c%200%2C-1.959%20-1.942%2C-2.943%20-5.815%2C-2.943%20-3.878%2C0%20-7.303%2C1.642%20-10.274%2C4.917%20-2.978%2C3.279%20-4.459%2C8.072%20-4.459%2C14.388%200%2C6.329%201.447%2C10.995%204.345%2C14.006%202.892%2C3.008%206.683%2C4.517%2011.346%2C4.517%201.959%2C0%203.987%2C-0.316%206.096%2C-0.961%202.11%2C-0.639%203.519%2C-1.238%204.238%2C-1.799%200.713%2C-0.577%201.391%2C-0.85%202.032%2C-0.85%200.638%2C0%201.671%2C0.746%203.1%2C2.255%201.431%2C1.505%202.713%2C3.786%203.844%2C6.827%201.126%2C3.057%201.69%2C5.4%201.69%2C7.062%200%2C1.649%20-0.036%2C2.786%20-0.109%2C3.386%20-1.581%2C1.73%20-4.499%2C3.102%20-8.755%2C4.122%20-4.248%2C1.017%20-9.011%2C1.522%20-14.28%2C1.522%20-11.594%2C0%20-20.66%2C-3.65%20-27.207%2C-10.95%20-6.552%2C-7.303%20-9.822%2C-16.783%20-9.822%2C-28.452%200%2C-13.701%203.347%2C-24.087%2010.041%2C-31.162%206.706%2C-7.074%2015.51%2C-10.607%2026.425%2C-10.607%205.87%2C0%2011.08%2C0.505%2015.632%2C1.522%204.557%2C1.013%207.586%2C2.053%209.093%2C3.105%20l%200.452%2C35.33%20C%2011.496%2C-1.036%206.078%2C-0.104%200%2C0%22%20transform%3D%22translate(468.265%20336.713)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22m%200%2C0%20c%20-0.624%2C-1.28%20-1.771%2C-2.454%20-3.449%2C-3.516%20-1.676%2C-1.069%20-3.805%2C-1.6%20-6.391%2C-1.6%20-3.412%2C0%20-6.156%2C1.075%20-8.24%2C3.249%20-2.076%2C2.157%20-3.116%2C5.266%20-3.116%2C9.323%20v%2010.116%20c%200%2C3.969%200.98%2C7.013%202.946%2C9.138%201.962%2C2.108%204.59%2C3.177%207.872%2C3.177%203.208%2C0%205.695%2C-0.844%207.455%2C-2.513%201.755%2C-1.675%202.677%2C-4.015%202.757%2C-7.003%20L%20-0.21%2C20.238%20h%20-2.619%20c%20-0.094%2C2.29%20-0.759%2C4.057%20-2.01%2C5.305%20-1.244%2C1.238%20-3.095%2C1.864%20-5.539%2C1.864%20-2.473%2C0%20-4.432%2C-0.837%20-5.866%2C-2.516%20-1.43%2C-1.675%20-2.143%2C-4.103%20-2.143%2C-7.293%20V%207.424%20c%200%2C-3.308%200.771%2C-5.83%202.311%2C-7.567%201.54%2C-1.724%203.616%2C-2.588%206.236%2C-2.588%201.913%2C0%203.451%2C0.339%204.602%2C1.033%201.155%2C0.684%201.956%2C1.519%202.409%2C2.51%20v%208.861%20h%20-7.06%20v%202.463%20H%200%20Z%22%20transform%3D%22translate(441.347%20235.751)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22m%200%2C0%20c%201.553%2C0%202.936%2C0.44%204.144%2C1.336%201.21%2C0.9%202.058%2C2.037%202.561%2C3.422%20v%205.468%20H%202.213%20c%20-1.91%2C0%20-3.44%2C-0.541%20-4.585%2C-1.623%20C%20-3.52%2C7.528%20-4.088%2C6.185%20-4.088%2C4.588%20-4.088%2C3.239%20-3.733%2C2.131%20-3.014%2C1.277%20-2.296%2C0.42%20-1.292%2C0%200%2C0%20M%207.124%2C-2.04%20C%206.984%2C-1.164%206.875%2C-0.453%206.806%2C0.104%206.739%2C0.671%206.705%2C1.235%206.705%2C1.808%205.938%2C0.554%204.948%2C-0.486%203.725%2C-1.301%202.504%2C-2.122%201.146%2C-2.529%20-0.35%2C-2.529%20c%20-2.092%2C0%20-3.701%2C0.648%20-4.84%2C1.946%20-1.132%2C1.303%20-1.704%2C3.059%20-1.704%2C5.276%200%2C2.343%200.823%2C4.223%202.473%2C5.618%201.649%2C1.395%203.89%2C2.092%206.709%2C2.092%20h%204.417%20v%203.106%20c%200%2C1.786%20-0.456%2C3.193%20-1.351%2C4.21%20-0.914%2C1.004%20-2.17%2C1.512%20-3.791%2C1.512%20-1.508%2C0%20-2.752%2C-0.479%20-3.728%2C-1.45%20-0.973%2C-0.965%20-1.456%2C-2.144%20-1.456%2C-3.549%20l%20-2.623%2C0.023%20-0.046%2C0.137%20c%20-0.074%2C1.906%200.647%2C3.591%202.168%2C5.084%201.515%2C1.489%203.459%2C2.229%205.825%2C2.229%202.338%2C0%204.22%2C-0.711%205.657%2C-2.128%201.429%2C-1.431%202.146%2C-3.471%202.146%2C-6.124%20V%203.057%20c%200%2C-0.903%200.042%2C-1.78%200.121%2C-2.617%200.081%2C-0.848%200.212%2C-1.665%200.417%2C-2.48%20z%22%20transform%3D%22translate(456.015%20232.825)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22m%200%2C0%200.24%2C-3.923%20c%200.664%2C1.404%201.554%2C2.486%202.657%2C3.255%201.107%2C0.759%202.41%2C1.138%203.906%2C1.138%201.527%2C0%202.814%2C-0.444%203.852%2C-1.343%201.039%2C-0.896%201.805%2C-2.252%202.292%2C-4.074%200.623%2C1.682%201.505%2C3.011%202.65%2C3.973%201.145%2C0.964%202.534%2C1.444%204.143%2C1.444%202.217%2C0%203.937%2C-0.897%205.156%2C-2.692%201.224%2C-1.799%201.834%2C-4.559%201.834%2C-8.288%20v%20-14.765%20h%20-2.823%20v%2014.814%20c%200%2C3.1%20-0.429%2C5.283%20-1.263%2C6.538%20-0.839%2C1.257%20-2.042%2C1.89%20-3.598%2C1.89%20-1.637%2C0%20-2.915%2C-0.691%20-3.834%2C-2.096%20-0.914%2C-1.405%20-1.478%2C-3.161%20-1.683%2C-5.282%20v%20-0.655%20-15.209%20H%2010.72%20v%2014.798%20c%200%2C3.027%20-0.424%2C5.194%20-1.292%2C6.488%20-0.864%2C1.294%20-2.066%2C1.936%20-3.609%2C1.936%20-1.475%2C0%20-2.668%2C-0.45%20-3.562%2C-1.342%20-0.9%2C-0.897%20-1.54%2C-2.125%20-1.928%2C-3.683%20V%20-25.275%20H%20-2.477%20V%200%20Z%22%20transform%3D%22translate(476.73%20259.105)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22m%200%2C0%20c%20-1.758%2C0%20-3.202%2C-0.802%20-4.334%2C-2.402%20-1.133%2C-1.606%20-1.718%2C-3.585%20-1.765%2C-5.944%20h%2011.66%20v%201.082%20c%200%2C2.086%20-0.489%2C3.823%20-1.469%2C5.201%20C%203.106%2C-0.684%201.745%2C0%200%2C0%20m%200.397%2C-23.76%20c%20-2.725%2C0%20-4.954%2C1.026%20-6.685%2C3.073%20-1.726%2C2.043%20-2.591%2C4.657%20-2.591%2C7.841%20v%204.197%20c%200%2C3.19%200.867%2C5.85%202.602%2C7.965%201.739%2C2.105%203.828%2C3.158%206.277%2C3.158%202.648%2C0%204.699%2C-0.939%206.164%2C-2.823%201.468%2C-1.887%202.201%2C-4.422%202.201%2C-7.603%20v%20-2.773%20H%20-6.099%20v%20-2.102%20c%200%2C-2.447%200.586%2C-4.484%201.752%2C-6.11%201.168%2C-1.63%202.755%2C-2.438%204.744%2C-2.438%201.382%2C0%202.585%2C0.244%203.588%2C0.724%201.003%2C0.491%201.863%2C1.179%202.578%2C2.082%20l%201.149%2C-1.988%20C%206.949%2C-21.525%205.96%2C-22.307%204.753%2C-22.887%203.549%2C-23.464%202.094%2C-23.76%200.397%2C-23.76%22%20transform%3D%22translate(522.823%20256.839)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22M%200%2C0%20C%20-1.763%2C0%20-3.21%2C-0.802%20-4.341%2C-2.402%20-5.467%2C-4.008%20-6.053%2C-5.987%20-6.104%2C-8.346%20H%205.559%20v%201.082%20c%200%2C2.086%20-0.488%2C3.823%20-1.474%2C5.201%20C%203.104%2C-0.684%201.744%2C0%200%2C0%20m%200.394%2C-23.76%20c%20-2.726%2C0%20-4.951%2C1.026%20-6.679%2C3.073%20-1.733%2C2.043%20-2.6%2C4.657%20-2.6%2C7.841%20v%204.197%20c%200%2C3.19%200.871%2C5.85%202.602%2C7.965%201.744%2C2.105%203.834%2C3.158%206.283%2C3.158%202.643%2C0%204.703%2C-0.939%206.164%2C-2.823%201.463%2C-1.887%202.197%2C-4.422%202.197%2C-7.603%20v%20-2.773%20H%20-6.104%20v%20-2.102%20c%200%2C-2.447%200.587%2C-4.484%201.76%2C-6.11%201.162%2C-1.63%202.742%2C-2.438%204.738%2C-2.438%201.387%2C0%202.585%2C0.244%203.585%2C0.724%201.007%2C0.491%201.866%2C1.179%202.589%2C2.082%20l%201.141%2C-1.988%20c%20-0.764%2C-0.968%20-1.75%2C-1.75%20-2.959%2C-2.33%20-1.204%2C-0.577%20-2.658%2C-0.873%20-4.356%2C-0.873%22%20transform%3D%22translate(558.08%20256.839)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22m%200%2C0%200.23%2C-4.178%20c%200.674%2C1.483%201.564%2C2.634%202.682%2C3.435%201.108%2C0.805%202.413%2C1.213%203.914%2C1.213%202.258%2C0%203.988%2C-0.835%205.189%2C-2.513%201.214%2C-1.675%201.815%2C-4.279%201.815%2C-7.812%20v%20-15.42%20h%20-2.825%20v%2015.394%20c%200%2C2.888%20-0.423%2C4.905%20-1.264%2C6.075%20-0.836%2C1.17%20-2.065%2C1.753%20-3.665%2C1.753%20-1.435%2C0%20-2.638%2C-0.466%20-3.603%2C-1.414%20C%201.504%2C-4.406%200.782%2C-5.657%200.301%2C-7.234%20V%20-25.275%20H%20-2.504%20V%200%20Z%22%20transform%3D%22translate(575.917%20259.105)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22m%200%2C0%20c%200%2C-2.565%200.486%2C-4.605%201.472%2C-6.123%200.974%2C-1.532%202.457%2C-2.288%204.436%2C-2.288%201.356%2C0%202.498%2C0.361%203.435%2C1.101%200.934%2C0.74%201.672%2C1.77%202.218%2C3.077%20v%2012.52%20c%20-0.525%2C1.346%20-1.246%2C2.434%20-2.157%2C3.272%20-0.91%2C0.824%20-2.062%2C1.238%20-3.448%2C1.238%20-1.975%2C0%20-3.468%2C-0.86%20-4.46%2C-2.587%20C%200.497%2C8.48%200%2C6.224%200%2C3.454%20Z%20m%20-2.833%2C3.454%20c%200%2C3.582%200.723%2C6.459%202.177%2C8.627%201.442%2C2.157%203.448%2C3.239%206.004%2C3.239%201.419%2C0%202.664%2C-0.346%203.728%2C-1.04%201.066%2C-0.681%201.947%2C-1.678%202.654%2C-2.946%20l%200.274%2C3.516%20h%202.381%20v%20-25.298%20c%200%2C-3.239%20-0.751%2C-5.749%20-2.26%2C-7.525%20-1.511%2C-1.769%20-3.657%2C-2.665%20-6.428%2C-2.665%20-0.996%2C0%20-2.067%2C0.156%20-3.212%2C0.459%20-1.147%2C0.303%20-2.162%2C0.701%20-3.052%2C1.2%20l%200.776%2C2.463%20c%200.759%2C-0.492%201.608%2C-0.873%202.548%2C-1.141%200.932%2C-0.277%201.895%2C-0.41%202.894%2C-0.41%202.009%2C0%203.498%2C0.645%204.46%2C1.932%200.966%2C1.304%201.45%2C3.19%201.45%2C5.687%20v%203.057%20c%20-0.717%2C-1.138%20-1.597%2C-2.011%20-2.64%2C-2.614%20-1.039%2C-0.606%20-2.253%2C-0.909%20-3.622%2C-0.909%20-2.539%2C0%20-4.53%2C0.994%20-5.968%2C2.982%20C%20-2.11%2C-5.948%20-2.833%2C-3.301%20-2.833%2C0%20Z%22%20transform%3D%22translate(600.869%20242.309)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22m%20627.82321%2C230.5176%20h%20-3.20089%20v%2028.58738%20h%203.20089%20z%20m%200%2C36.72644%20h%20-3.20089%20v%204.50385%20h%203.20089%20z%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22m%200%2C0%200.23%2C-4.178%20c%200.676%2C1.483%201.562%2C2.634%202.678%2C3.435%201.115%2C0.805%202.422%2C1.213%203.916%2C1.213%202.258%2C0%203.995%2C-0.835%205.199%2C-2.513%201.211%2C-1.675%201.807%2C-4.279%201.807%2C-7.812%20v%20-15.42%20h%20-2.825%20v%2015.394%20c%200%2C2.888%20-0.422%2C4.905%20-1.261%2C6.075%20-0.843%2C1.17%20-2.063%2C1.753%20-3.668%2C1.753%20-1.434%2C0%20-2.635%2C-0.466%20-3.599%2C-1.414%20C%201.51%2C-4.406%200.785%2C-5.657%200.306%2C-7.234%20V%20-25.275%20H%20-2.503%20V%200%20Z%22%20transform%3D%22translate(638.154%20259.105)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22M%200%2C0%20C%20-1.763%2C0%20-3.208%2C-0.802%20-4.334%2C-2.402%20-5.463%2C-4.008%20-6.052%2C-5.987%20-6.102%2C-8.346%20H%205.56%20v%201.082%20c%200%2C2.086%20-0.486%2C3.823%20-1.47%2C5.201%20C%203.109%2C-0.684%201.747%2C0%200%2C0%20m%200.401%2C-23.76%20c%20-2.733%2C0%20-4.958%2C1.026%20-6.681%2C3.073%20-1.73%2C2.043%20-2.595%2C4.657%20-2.595%2C7.841%20v%204.197%20c%200%2C3.19%200.865%2C5.85%202.6%2C7.965%201.739%2C2.105%203.831%2C3.158%206.275%2C3.158%202.646%2C0%204.706%2C-0.939%206.172%2C-2.823%201.462%2C-1.887%202.195%2C-4.422%202.195%2C-7.603%20v%20-2.773%20H%20-6.102%20v%20-2.102%20c%200%2C-2.447%200.59%2C-4.484%201.757%2C-6.11%201.166%2C-1.63%202.748%2C-2.438%204.746%2C-2.438%201.382%2C0%202.579%2C0.244%203.578%2C0.724%201.012%2C0.491%201.869%2C1.179%202.591%2C2.082%20l%201.147%2C-1.988%20c%20-0.769%2C-0.968%20-1.755%2C-1.75%20-2.962%2C-2.33%20-1.203%2C-0.577%20-2.658%2C-0.873%20-4.354%2C-0.873%22%20transform%3D%22translate(669.709%20256.839)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23fff%22%20d%3D%22m%200%2C0%20c%200%2C0%20-0.325%2C1.994%20-0.515%2C1.976%20l%20-36.182%2C-3.491%20c%20-2.879%2C-0.278%20-5.115%2C-2.574%20-5.317%2C-5.459%20l%20-0.994%2C-14.247%20-27.992%2C-1.997%20-1.904%2C12.912%20c%20-0.424%2C2.872%20-2.932%2C5.037%20-5.835%2C5.037%20h%20-38.188%20c%20-2.902%2C0%20-5.41%2C-2.165%20-5.834%2C-5.037%20l%20-1.905%2C-12.912%20-27.992%2C1.997%20-0.994%2C14.247%20c%20-0.202%2C2.886%20-2.438%2C5.182%20-5.317%2C5.46%20l%20-36.2%2C3.49%20c%20-0.187%2C0.018%20-0.324%2C-1.978%20-0.511%2C-1.978%20l%20-0.049%2C-7.83%2030.658%2C-4.944%201.004%2C-14.374%20c%200.203%2C-2.91%202.551%2C-5.263%205.463%2C-5.472%20l%2038.551%2C-2.75%20c%200.146%2C-0.01%200.29%2C-0.016%200.434%2C-0.016%202.897%2C0%205.401%2C2.166%205.825%2C5.038%20l%201.959%2C13.286%20h%2028.005%20l%201.959%2C-13.286%20c%200.423%2C-2.871%202.93%2C-5.037%205.831%2C-5.037%200.142%2C0%200.284%2C0.005%200.423%2C0.015%20l%2038.556%2C2.75%20c%202.911%2C0.209%205.26%2C2.562%205.463%2C5.472%20l%201.003%2C14.374%2030.645%2C4.966%20z%22%20transform%3D%22translate(348.131%20279.267)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23478cbf%22%20d%3D%22m%200%2C0%20v%20-47.514%20-6.035%20-5.492%20c%200.108%2C-0.001%200.216%2C-0.005%200.323%2C-0.015%20l%2036.196%2C-3.49%20c%201.896%2C-0.183%203.382%2C-1.709%203.514%2C-3.609%20l%201.116%2C-15.978%2031.574%2C-2.253%202.175%2C14.747%20c%200.282%2C1.912%201.922%2C3.329%203.856%2C3.329%20h%2038.188%20c%201.933%2C0%203.573%2C-1.417%203.855%2C-3.329%20l%202.175%2C-14.747%2031.575%2C2.253%201.115%2C15.978%20c%200.133%2C1.9%201.618%2C3.425%203.514%2C3.609%20l%2036.182%2C3.49%20c%200.107%2C0.01%200.214%2C0.014%200.322%2C0.015%20v%204.711%20l%200.015%2C0.005%20V%200%20c%205.09692%2C6.4164715%209.92323%2C13.494208%2013.621%2C19.449%20-5.651%2C9.62%20-12.575%2C18.217%20-19.976%2C26.182%20-6.864%2C-3.455%20-13.531%2C-7.369%20-19.828%2C-11.534%20-3.151%2C3.132%20-6.7%2C5.694%20-10.186%2C8.372%20-3.425%2C2.751%20-7.285%2C4.768%20-10.946%2C7.118%201.09%2C8.117%201.629%2C16.108%201.846%2C24.448%20-9.446%2C4.754%20-19.519%2C7.906%20-29.708%2C10.17%20-4.068%2C-6.837%20-7.788%2C-14.241%20-11.028%2C-21.479%20-3.842%2C0.642%20-7.702%2C0.88%20-11.567%2C0.926%20v%200.006%20c%20-0.027%2C0%20-0.052%2C-0.006%20-0.075%2C-0.006%20-0.024%2C0%20-0.049%2C0.006%20-0.073%2C0.006%20V%2063.652%20C%2093.903%2C63.606%2090.046%2C63.368%2086.203%2C62.726%2082.965%2C69.964%2079.247%2C77.368%2075.173%2C84.205%2064.989%2C81.941%2054.915%2C78.789%2045.47%2C74.035%2045.686%2C65.695%2046.225%2C57.704%2047.318%2C49.587%2043.65%2C47.237%2039.795%2C45.22%2036.369%2C42.469%2032.888%2C39.791%2029.333%2C37.229%2026.181%2C34.097%2019.884%2C38.262%2013.219%2C42.176%206.353%2C45.631%20-1.048%2C37.666%20-7.968%2C29.069%20-13.621%2C19.449%20-9.1783421%2C12.475308%20-4.4130298%2C5.4661124%200%2C0%20Z%22%20transform%3D%22translate(126.806%20346.045)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23478cbf%22%20d%3D%22m%200%2C0%20-1.121%2C-16.063%20c%20-0.135%2C-1.936%20-1.675%2C-3.477%20-3.611%2C-3.616%20l%20-38.555%2C-2.751%20c%20-0.094%2C-0.007%20-0.188%2C-0.01%20-0.281%2C-0.01%20-1.916%2C0%20-3.569%2C1.406%20-3.852%2C3.33%20l%20-2.211%2C14.994%20H%20-81.09%20l%20-2.211%2C-14.994%20c%20-0.297%2C-2.018%20-2.101%2C-3.469%20-4.133%2C-3.32%20l%20-38.555%2C2.751%20c%20-1.936%2C0.139%20-3.476%2C1.68%20-3.611%2C3.616%20L%20-130.721%2C0%20-163.268%2C3.138%20c%200.015%2C-3.498%200.06%2C-7.33%200.06%2C-8.093%200%2C-34.374%2043.605%2C-50.896%2097.781%2C-51.086%20h%200.066%200.067%20c%2054.176%2C0.19%2097.766%2C16.712%2097.766%2C51.086%200%2C0.777%200.047%2C4.593%200.063%2C8.093%20z%22%20transform%3D%22translate(311.403%20266.884)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23fff%22%20d%3D%22m%200%2C0%20c%200%2C-12.052%20-9.765%2C-21.815%20-21.813%2C-21.815%20-12.042%2C0%20-21.81%2C9.763%20-21.81%2C21.815%200%2C12.044%209.768%2C21.802%2021.81%2C21.802%20C%20-9.765%2C21.802%200%2C12.044%200%2C0%22%20transform%3D%22translate(204.114%20318.938)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23414042%22%20d%3D%22m%200%2C0%20c%200%2C-7.994%20-6.479%2C-14.473%20-14.479%2C-14.473%20-7.996%2C0%20-14.479%2C6.479%20-14.479%2C14.473%200%2C7.994%206.483%2C14.479%2014.479%2C14.479%20C%20-6.479%2C14.479%200%2C7.994%200%2C0%22%20transform%3D%22translate(198.177%20317.474)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23fff%22%20d%3D%22m%200%2C0%20c%20-3.878%2C0%20-7.021%2C2.858%20-7.021%2C6.381%20v%2020.081%20c%200%2C3.52%203.143%2C6.381%207.021%2C6.381%203.878%2C0%207.028%2C-2.861%207.028%2C-6.381%20V%206.381%20C%207.028%2C2.858%203.878%2C0%200%2C0%22%20transform%3D%22translate(237.475%20292.02)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23fff%22%20d%3D%22m%200%2C0%20c%200%2C-12.052%209.765%2C-21.815%2021.815%2C-21.815%2012.041%2C0%2021.808%2C9.763%2021.808%2C21.815%200%2C12.044%20-9.767%2C21.802%20-21.808%2C21.802%20C%209.765%2C21.802%200%2C12.044%200%2C0%22%20transform%3D%22translate(270.84%20318.938)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23414042%22%20d%3D%22m%200%2C0%20c%200%2C-7.994%206.477%2C-14.473%2014.471%2C-14.473%208.002%2C0%2014.479%2C6.479%2014.479%2C14.473%200%2C7.994%20-6.477%2C14.479%20-14.479%2C14.479%20C%206.477%2C14.479%200%2C7.994%200%2C0%22%20transform%3D%22translate(276.778%20317.474)scale(1.13105)%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E" alt="Godot">
+      <span class="sub">BlackNode Engine</span>
+    </button>
+    <button id="menuBtn" class="btn menuBtn" aria-label="Menu" aria-expanded="false">&#9776;</button>
+    <div class="spacer"></div>
+    <div class="ctl" id="topCtl">
+      <label class="field">Version
+        <select id="versionSel" title="Choose which Godot build to load"></select>
+      </label>
+      <button id="homeBtn" class="btn" disabled><span class="ico">&#8592;</span>Start</button>
+      <button id="reloadBtn" class="btn" title="Restart the editor"><span class="ico">&#8635;</span>Restart</button>
+      <button id="fsBtn" class="btn" title="Fullscreen"><span class="ico">&#9974;</span>Fullscreen</button>
+      <button id="kbBtn" class="btn" title="Show the on-screen keyboard (mobile)"><span class="ico">⌨</span>Keys</button>
+      <a id="openLink" class="btn" target="_blank" rel="noopener" title="Open the official web editor in a new browser tab"><span class="ico">&#8599;</span>New tab</a>
+    </div>
+  </header>
+
+  <main class="stage">
+    <section id="homePane" class="home">
+      <div class="homeInner">
+        <div class="hero">
+          <img class="heroLogo" src="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20xmlns%3Axlink%3D%22http%3A%2F%2Fwww.w3.org%2F1999%2Fxlink%22%20xml%3Aspace%3D%22preserve%22%20width%3D%221024%22%20height%3D%22414%22%20viewBox%3D%220%200%20960%20388.125%22%3E%3Cdefs%3E%3CclipPath%20id%3D%22a%22%20clipPathUnits%3D%22userSpaceOnUse%22%3E%3Cpath%20d%3D%22M%200%2C595.276%20H%20841.89%20V%200%20H%200%20Z%22%2F%3E%3C%2FclipPath%3E%3C%2Fdefs%3E%3Cg%20clip-path%3D%22url(%23a)%22%20transform%3D%22matrix(1.25%200%200%20-1.25%20-94.25%20597.499)%22%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22m%200%2C0%20c%20-3.611%2C0%20-6.636%2C-1.659%20-9.09%2C-4.967%20-2.441%2C-3.311%20-3.668%2C-7.958%20-3.668%2C-13.938%200%2C-5.993%201.166%2C-10.581%203.503%2C-13.778%202.333%2C-3.207%205.398%2C-4.804%209.2%2C-4.804%203.8%2C0%206.887%2C1.617%209.258%2C4.862%202.371%2C3.233%203.559%2C7.861%203.559%2C13.886%200%2C6.02%20-1.227%2C10.654%20-3.673%2C13.89%20C%206.646%2C-1.617%203.616%2C0%200%2C0%20m%20-0.055%2C-59.493%20c%20-10.573%2C0%20-19.195%2C3.46%20-25.859%2C10.379%20-6.655%2C6.925%20-9.984%2C17.03%20-9.984%2C30.314%200%2C13.292%203.367%2C23.356%2010.101%2C30.209%206.736%2C6.844%2015.431%2C10.269%2026.082%2C10.269%2010.649%2C0%2019.251%2C-3.363%2025.794%2C-10.109%206.555%2C-6.733%209.827%2C-16.94%209.827%2C-30.591%200%2C-13.661%20-3.348%2C-23.822%20-10.05%2C-30.49%20-6.702%2C-6.654%20-15.333%2C-9.981%20-25.911%2C-9.981%22%20transform%3D%22translate(531.45%20355.316)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22m%200%2C0%20v%20-33.768%20c%200%2C-1.577%200.116%2C-2.571%200.342%2C-2.988%200.224%2C-0.415%200.903%2C-0.623%202.029%2C-0.623%204.144%2C0%207.283%2C1.548%209.429%2C4.634%202.151%2C3.083%203.215%2C8.216%203.215%2C15.405%200%2C7.192%20-1.113%2C11.878%20-3.325%2C14.055%20C%209.467%2C-1.102%205.946%2C0%201.129%2C0%20Z%20m%20-21.675%2C-52.392%20v%2067.735%20c%200%2C1.883%200.468%2C3.369%201.413%2C4.471%200.939%2C1.085%202.161%2C1.636%203.671%2C1.636%20H%202.263%20c%2011.965%2C0%2021.053%2C-3.018%2027.257%2C-9.04%206.215%2C-6.02%209.322%2C-15.499%209.322%2C-28.447%200%2C-27.7%20-11.821%2C-41.547%20-35.456%2C-41.547%20h%20-19.302%20c%20-3.836%2C0%20-5.759%2C1.727%20-5.759%2C5.192%22%20transform%3D%22translate(607.851%20354.431)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22m%200%2C0%20c%20-3.612%2C0%20-6.645%2C-1.659%20-9.095%2C-4.967%20-2.44%2C-3.311%20-3.662%2C-7.958%20-3.662%2C-13.938%200%2C-5.993%201.169%2C-10.581%203.499%2C-13.778%202.33%2C-3.207%205.398%2C-4.804%209.2%2C-4.804%203.801%2C0%206.89%2C1.617%209.258%2C4.862%202.372%2C3.233%203.56%2C7.861%203.56%2C13.886%200%2C6.02%20-1.225%2C10.654%20-3.671%2C13.89%20C%206.642%2C-1.617%203.616%2C0%200%2C0%20m%20-0.058%2C-59.493%20c%20-10.577%2C0%20-19.193%2C3.46%20-25.851%2C10.379%20-6.663%2C6.925%20-9.993%2C17.03%20-9.993%2C30.314%200%2C13.292%203.367%2C23.356%2010.1%2C30.209%206.741%2C6.844%2015.431%2C10.269%2026.086%2C10.269%2010.651%2C0%2019.246%2C-3.363%2025.797%2C-10.109%206.55%2C-6.733%209.822%2C-16.94%209.822%2C-30.591%200%2C-13.661%20-3.349%2C-23.822%20-10.05%2C-30.49%20-6.699%2C-6.654%20-15.338%2C-9.981%20-25.911%2C-9.981%22%20transform%3D%22translate(700.81%20355.316)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22m%200%2C0%20c%200%2C-1.496%20-3.721%2C-2.255%20-11.176%2C-2.255%20-7.448%2C0%20-11.18%2C0.759%20-11.18%2C2.255%20v%2056.681%20h%20-13.545%20c%20-1.281%2C0%20-2.185%2C1.727%20-2.71%2C5.198%20-0.226%2C1.652%20-0.334%2C3.343%20-0.334%2C5.077%200%2C1.724%200.108%2C3.422%200.334%2C5.077%200.525%2C3.462%201.429%2C5.202%202.71%2C5.202%20h%2049.112%20c%201.279%2C0%202.179%2C-1.74%202.712%2C-5.202%200.221%2C-1.655%200.335%2C-3.353%200.335%2C-5.077%200%2C-1.734%20-0.114%2C-3.425%20-0.335%2C-5.077%20C%2015.39%2C58.408%2014.49%2C56.681%2013.211%2C56.681%20H%200%20Z%22%20transform%3D%22translate(789.011%20291.335)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22m%200%2C0%20c%20-6.078%2C0.094%20-13.034%2C-1.173%20-13.034%2C-1.173%20v%20-11.863%20h%206.995%20l%20-0.078%2C-5.288%20c%200%2C-1.959%20-1.942%2C-2.943%20-5.815%2C-2.943%20-3.878%2C0%20-7.303%2C1.642%20-10.274%2C4.917%20-2.978%2C3.279%20-4.459%2C8.072%20-4.459%2C14.388%200%2C6.329%201.447%2C10.995%204.345%2C14.006%202.892%2C3.008%206.683%2C4.517%2011.346%2C4.517%201.959%2C0%203.987%2C-0.316%206.096%2C-0.961%202.11%2C-0.639%203.519%2C-1.238%204.238%2C-1.799%200.713%2C-0.577%201.391%2C-0.85%202.032%2C-0.85%200.638%2C0%201.671%2C0.746%203.1%2C2.255%201.431%2C1.505%202.713%2C3.786%203.844%2C6.827%201.126%2C3.057%201.69%2C5.4%201.69%2C7.062%200%2C1.649%20-0.036%2C2.786%20-0.109%2C3.386%20-1.581%2C1.73%20-4.499%2C3.102%20-8.755%2C4.122%20-4.248%2C1.017%20-9.011%2C1.522%20-14.28%2C1.522%20-11.594%2C0%20-20.66%2C-3.65%20-27.207%2C-10.95%20-6.552%2C-7.303%20-9.822%2C-16.783%20-9.822%2C-28.452%200%2C-13.701%203.347%2C-24.087%2010.041%2C-31.162%206.706%2C-7.074%2015.51%2C-10.607%2026.425%2C-10.607%205.87%2C0%2011.08%2C0.505%2015.632%2C1.522%204.557%2C1.013%207.586%2C2.053%209.093%2C3.105%20l%200.452%2C35.33%20C%2011.496%2C-1.036%206.078%2C-0.104%200%2C0%22%20transform%3D%22translate(468.265%20336.713)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22m%200%2C0%20c%20-0.624%2C-1.28%20-1.771%2C-2.454%20-3.449%2C-3.516%20-1.676%2C-1.069%20-3.805%2C-1.6%20-6.391%2C-1.6%20-3.412%2C0%20-6.156%2C1.075%20-8.24%2C3.249%20-2.076%2C2.157%20-3.116%2C5.266%20-3.116%2C9.323%20v%2010.116%20c%200%2C3.969%200.98%2C7.013%202.946%2C9.138%201.962%2C2.108%204.59%2C3.177%207.872%2C3.177%203.208%2C0%205.695%2C-0.844%207.455%2C-2.513%201.755%2C-1.675%202.677%2C-4.015%202.757%2C-7.003%20L%20-0.21%2C20.238%20h%20-2.619%20c%20-0.094%2C2.29%20-0.759%2C4.057%20-2.01%2C5.305%20-1.244%2C1.238%20-3.095%2C1.864%20-5.539%2C1.864%20-2.473%2C0%20-4.432%2C-0.837%20-5.866%2C-2.516%20-1.43%2C-1.675%20-2.143%2C-4.103%20-2.143%2C-7.293%20V%207.424%20c%200%2C-3.308%200.771%2C-5.83%202.311%2C-7.567%201.54%2C-1.724%203.616%2C-2.588%206.236%2C-2.588%201.913%2C0%203.451%2C0.339%204.602%2C1.033%201.155%2C0.684%201.956%2C1.519%202.409%2C2.51%20v%208.861%20h%20-7.06%20v%202.463%20H%200%20Z%22%20transform%3D%22translate(441.347%20235.751)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22m%200%2C0%20c%201.553%2C0%202.936%2C0.44%204.144%2C1.336%201.21%2C0.9%202.058%2C2.037%202.561%2C3.422%20v%205.468%20H%202.213%20c%20-1.91%2C0%20-3.44%2C-0.541%20-4.585%2C-1.623%20C%20-3.52%2C7.528%20-4.088%2C6.185%20-4.088%2C4.588%20-4.088%2C3.239%20-3.733%2C2.131%20-3.014%2C1.277%20-2.296%2C0.42%20-1.292%2C0%200%2C0%20M%207.124%2C-2.04%20C%206.984%2C-1.164%206.875%2C-0.453%206.806%2C0.104%206.739%2C0.671%206.705%2C1.235%206.705%2C1.808%205.938%2C0.554%204.948%2C-0.486%203.725%2C-1.301%202.504%2C-2.122%201.146%2C-2.529%20-0.35%2C-2.529%20c%20-2.092%2C0%20-3.701%2C0.648%20-4.84%2C1.946%20-1.132%2C1.303%20-1.704%2C3.059%20-1.704%2C5.276%200%2C2.343%200.823%2C4.223%202.473%2C5.618%201.649%2C1.395%203.89%2C2.092%206.709%2C2.092%20h%204.417%20v%203.106%20c%200%2C1.786%20-0.456%2C3.193%20-1.351%2C4.21%20-0.914%2C1.004%20-2.17%2C1.512%20-3.791%2C1.512%20-1.508%2C0%20-2.752%2C-0.479%20-3.728%2C-1.45%20-0.973%2C-0.965%20-1.456%2C-2.144%20-1.456%2C-3.549%20l%20-2.623%2C0.023%20-0.046%2C0.137%20c%20-0.074%2C1.906%200.647%2C3.591%202.168%2C5.084%201.515%2C1.489%203.459%2C2.229%205.825%2C2.229%202.338%2C0%204.22%2C-0.711%205.657%2C-2.128%201.429%2C-1.431%202.146%2C-3.471%202.146%2C-6.124%20V%203.057%20c%200%2C-0.903%200.042%2C-1.78%200.121%2C-2.617%200.081%2C-0.848%200.212%2C-1.665%200.417%2C-2.48%20z%22%20transform%3D%22translate(456.015%20232.825)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22m%200%2C0%200.24%2C-3.923%20c%200.664%2C1.404%201.554%2C2.486%202.657%2C3.255%201.107%2C0.759%202.41%2C1.138%203.906%2C1.138%201.527%2C0%202.814%2C-0.444%203.852%2C-1.343%201.039%2C-0.896%201.805%2C-2.252%202.292%2C-4.074%200.623%2C1.682%201.505%2C3.011%202.65%2C3.973%201.145%2C0.964%202.534%2C1.444%204.143%2C1.444%202.217%2C0%203.937%2C-0.897%205.156%2C-2.692%201.224%2C-1.799%201.834%2C-4.559%201.834%2C-8.288%20v%20-14.765%20h%20-2.823%20v%2014.814%20c%200%2C3.1%20-0.429%2C5.283%20-1.263%2C6.538%20-0.839%2C1.257%20-2.042%2C1.89%20-3.598%2C1.89%20-1.637%2C0%20-2.915%2C-0.691%20-3.834%2C-2.096%20-0.914%2C-1.405%20-1.478%2C-3.161%20-1.683%2C-5.282%20v%20-0.655%20-15.209%20H%2010.72%20v%2014.798%20c%200%2C3.027%20-0.424%2C5.194%20-1.292%2C6.488%20-0.864%2C1.294%20-2.066%2C1.936%20-3.609%2C1.936%20-1.475%2C0%20-2.668%2C-0.45%20-3.562%2C-1.342%20-0.9%2C-0.897%20-1.54%2C-2.125%20-1.928%2C-3.683%20V%20-25.275%20H%20-2.477%20V%200%20Z%22%20transform%3D%22translate(476.73%20259.105)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22m%200%2C0%20c%20-1.758%2C0%20-3.202%2C-0.802%20-4.334%2C-2.402%20-1.133%2C-1.606%20-1.718%2C-3.585%20-1.765%2C-5.944%20h%2011.66%20v%201.082%20c%200%2C2.086%20-0.489%2C3.823%20-1.469%2C5.201%20C%203.106%2C-0.684%201.745%2C0%200%2C0%20m%200.397%2C-23.76%20c%20-2.725%2C0%20-4.954%2C1.026%20-6.685%2C3.073%20-1.726%2C2.043%20-2.591%2C4.657%20-2.591%2C7.841%20v%204.197%20c%200%2C3.19%200.867%2C5.85%202.602%2C7.965%201.739%2C2.105%203.828%2C3.158%206.277%2C3.158%202.648%2C0%204.699%2C-0.939%206.164%2C-2.823%201.468%2C-1.887%202.201%2C-4.422%202.201%2C-7.603%20v%20-2.773%20H%20-6.099%20v%20-2.102%20c%200%2C-2.447%200.586%2C-4.484%201.752%2C-6.11%201.168%2C-1.63%202.755%2C-2.438%204.744%2C-2.438%201.382%2C0%202.585%2C0.244%203.588%2C0.724%201.003%2C0.491%201.863%2C1.179%202.578%2C2.082%20l%201.149%2C-1.988%20C%206.949%2C-21.525%205.96%2C-22.307%204.753%2C-22.887%203.549%2C-23.464%202.094%2C-23.76%200.397%2C-23.76%22%20transform%3D%22translate(522.823%20256.839)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22M%200%2C0%20C%20-1.763%2C0%20-3.21%2C-0.802%20-4.341%2C-2.402%20-5.467%2C-4.008%20-6.053%2C-5.987%20-6.104%2C-8.346%20H%205.559%20v%201.082%20c%200%2C2.086%20-0.488%2C3.823%20-1.474%2C5.201%20C%203.104%2C-0.684%201.744%2C0%200%2C0%20m%200.394%2C-23.76%20c%20-2.726%2C0%20-4.951%2C1.026%20-6.679%2C3.073%20-1.733%2C2.043%20-2.6%2C4.657%20-2.6%2C7.841%20v%204.197%20c%200%2C3.19%200.871%2C5.85%202.602%2C7.965%201.744%2C2.105%203.834%2C3.158%206.283%2C3.158%202.643%2C0%204.703%2C-0.939%206.164%2C-2.823%201.463%2C-1.887%202.197%2C-4.422%202.197%2C-7.603%20v%20-2.773%20H%20-6.104%20v%20-2.102%20c%200%2C-2.447%200.587%2C-4.484%201.76%2C-6.11%201.162%2C-1.63%202.742%2C-2.438%204.738%2C-2.438%201.387%2C0%202.585%2C0.244%203.585%2C0.724%201.007%2C0.491%201.866%2C1.179%202.589%2C2.082%20l%201.141%2C-1.988%20c%20-0.764%2C-0.968%20-1.75%2C-1.75%20-2.959%2C-2.33%20-1.204%2C-0.577%20-2.658%2C-0.873%20-4.356%2C-0.873%22%20transform%3D%22translate(558.08%20256.839)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22m%200%2C0%200.23%2C-4.178%20c%200.674%2C1.483%201.564%2C2.634%202.682%2C3.435%201.108%2C0.805%202.413%2C1.213%203.914%2C1.213%202.258%2C0%203.988%2C-0.835%205.189%2C-2.513%201.214%2C-1.675%201.815%2C-4.279%201.815%2C-7.812%20v%20-15.42%20h%20-2.825%20v%2015.394%20c%200%2C2.888%20-0.423%2C4.905%20-1.264%2C6.075%20-0.836%2C1.17%20-2.065%2C1.753%20-3.665%2C1.753%20-1.435%2C0%20-2.638%2C-0.466%20-3.603%2C-1.414%20C%201.504%2C-4.406%200.782%2C-5.657%200.301%2C-7.234%20V%20-25.275%20H%20-2.504%20V%200%20Z%22%20transform%3D%22translate(575.917%20259.105)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22m%200%2C0%20c%200%2C-2.565%200.486%2C-4.605%201.472%2C-6.123%200.974%2C-1.532%202.457%2C-2.288%204.436%2C-2.288%201.356%2C0%202.498%2C0.361%203.435%2C1.101%200.934%2C0.74%201.672%2C1.77%202.218%2C3.077%20v%2012.52%20c%20-0.525%2C1.346%20-1.246%2C2.434%20-2.157%2C3.272%20-0.91%2C0.824%20-2.062%2C1.238%20-3.448%2C1.238%20-1.975%2C0%20-3.468%2C-0.86%20-4.46%2C-2.587%20C%200.497%2C8.48%200%2C6.224%200%2C3.454%20Z%20m%20-2.833%2C3.454%20c%200%2C3.582%200.723%2C6.459%202.177%2C8.627%201.442%2C2.157%203.448%2C3.239%206.004%2C3.239%201.419%2C0%202.664%2C-0.346%203.728%2C-1.04%201.066%2C-0.681%201.947%2C-1.678%202.654%2C-2.946%20l%200.274%2C3.516%20h%202.381%20v%20-25.298%20c%200%2C-3.239%20-0.751%2C-5.749%20-2.26%2C-7.525%20-1.511%2C-1.769%20-3.657%2C-2.665%20-6.428%2C-2.665%20-0.996%2C0%20-2.067%2C0.156%20-3.212%2C0.459%20-1.147%2C0.303%20-2.162%2C0.701%20-3.052%2C1.2%20l%200.776%2C2.463%20c%200.759%2C-0.492%201.608%2C-0.873%202.548%2C-1.141%200.932%2C-0.277%201.895%2C-0.41%202.894%2C-0.41%202.009%2C0%203.498%2C0.645%204.46%2C1.932%200.966%2C1.304%201.45%2C3.19%201.45%2C5.687%20v%203.057%20c%20-0.717%2C-1.138%20-1.597%2C-2.011%20-2.64%2C-2.614%20-1.039%2C-0.606%20-2.253%2C-0.909%20-3.622%2C-0.909%20-2.539%2C0%20-4.53%2C0.994%20-5.968%2C2.982%20C%20-2.11%2C-5.948%20-2.833%2C-3.301%20-2.833%2C0%20Z%22%20transform%3D%22translate(600.869%20242.309)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22m%20627.82321%2C230.5176%20h%20-3.20089%20v%2028.58738%20h%203.20089%20z%20m%200%2C36.72644%20h%20-3.20089%20v%204.50385%20h%203.20089%20z%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22m%200%2C0%200.23%2C-4.178%20c%200.676%2C1.483%201.562%2C2.634%202.678%2C3.435%201.115%2C0.805%202.422%2C1.213%203.916%2C1.213%202.258%2C0%203.995%2C-0.835%205.199%2C-2.513%201.211%2C-1.675%201.807%2C-4.279%201.807%2C-7.812%20v%20-15.42%20h%20-2.825%20v%2015.394%20c%200%2C2.888%20-0.422%2C4.905%20-1.261%2C6.075%20-0.843%2C1.17%20-2.063%2C1.753%20-3.668%2C1.753%20-1.434%2C0%20-2.635%2C-0.466%20-3.599%2C-1.414%20C%201.51%2C-4.406%200.785%2C-5.657%200.306%2C-7.234%20V%20-25.275%20H%20-2.503%20V%200%20Z%22%20transform%3D%22translate(638.154%20259.105)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22M%200%2C0%20C%20-1.763%2C0%20-3.208%2C-0.802%20-4.334%2C-2.402%20-5.463%2C-4.008%20-6.052%2C-5.987%20-6.102%2C-8.346%20H%205.56%20v%201.082%20c%200%2C2.086%20-0.486%2C3.823%20-1.47%2C5.201%20C%203.109%2C-0.684%201.747%2C0%200%2C0%20m%200.401%2C-23.76%20c%20-2.733%2C0%20-4.958%2C1.026%20-6.681%2C3.073%20-1.73%2C2.043%20-2.595%2C4.657%20-2.595%2C7.841%20v%204.197%20c%200%2C3.19%200.865%2C5.85%202.6%2C7.965%201.739%2C2.105%203.831%2C3.158%206.275%2C3.158%202.646%2C0%204.706%2C-0.939%206.172%2C-2.823%201.462%2C-1.887%202.195%2C-4.422%202.195%2C-7.603%20v%20-2.773%20H%20-6.102%20v%20-2.102%20c%200%2C-2.447%200.59%2C-4.484%201.757%2C-6.11%201.166%2C-1.63%202.748%2C-2.438%204.746%2C-2.438%201.382%2C0%202.579%2C0.244%203.578%2C0.724%201.012%2C0.491%201.869%2C1.179%202.591%2C2.082%20l%201.147%2C-1.988%20c%20-0.769%2C-0.968%20-1.755%2C-1.75%20-2.962%2C-2.33%20-1.203%2C-0.577%20-2.658%2C-0.873%20-4.354%2C-0.873%22%20transform%3D%22translate(669.709%20256.839)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23fff%22%20d%3D%22m%200%2C0%20c%200%2C0%20-0.325%2C1.994%20-0.515%2C1.976%20l%20-36.182%2C-3.491%20c%20-2.879%2C-0.278%20-5.115%2C-2.574%20-5.317%2C-5.459%20l%20-0.994%2C-14.247%20-27.992%2C-1.997%20-1.904%2C12.912%20c%20-0.424%2C2.872%20-2.932%2C5.037%20-5.835%2C5.037%20h%20-38.188%20c%20-2.902%2C0%20-5.41%2C-2.165%20-5.834%2C-5.037%20l%20-1.905%2C-12.912%20-27.992%2C1.997%20-0.994%2C14.247%20c%20-0.202%2C2.886%20-2.438%2C5.182%20-5.317%2C5.46%20l%20-36.2%2C3.49%20c%20-0.187%2C0.018%20-0.324%2C-1.978%20-0.511%2C-1.978%20l%20-0.049%2C-7.83%2030.658%2C-4.944%201.004%2C-14.374%20c%200.203%2C-2.91%202.551%2C-5.263%205.463%2C-5.472%20l%2038.551%2C-2.75%20c%200.146%2C-0.01%200.29%2C-0.016%200.434%2C-0.016%202.897%2C0%205.401%2C2.166%205.825%2C5.038%20l%201.959%2C13.286%20h%2028.005%20l%201.959%2C-13.286%20c%200.423%2C-2.871%202.93%2C-5.037%205.831%2C-5.037%200.142%2C0%200.284%2C0.005%200.423%2C0.015%20l%2038.556%2C2.75%20c%202.911%2C0.209%205.26%2C2.562%205.463%2C5.472%20l%201.003%2C14.374%2030.645%2C4.966%20z%22%20transform%3D%22translate(348.131%20279.267)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23478cbf%22%20d%3D%22m%200%2C0%20v%20-47.514%20-6.035%20-5.492%20c%200.108%2C-0.001%200.216%2C-0.005%200.323%2C-0.015%20l%2036.196%2C-3.49%20c%201.896%2C-0.183%203.382%2C-1.709%203.514%2C-3.609%20l%201.116%2C-15.978%2031.574%2C-2.253%202.175%2C14.747%20c%200.282%2C1.912%201.922%2C3.329%203.856%2C3.329%20h%2038.188%20c%201.933%2C0%203.573%2C-1.417%203.855%2C-3.329%20l%202.175%2C-14.747%2031.575%2C2.253%201.115%2C15.978%20c%200.133%2C1.9%201.618%2C3.425%203.514%2C3.609%20l%2036.182%2C3.49%20c%200.107%2C0.01%200.214%2C0.014%200.322%2C0.015%20v%204.711%20l%200.015%2C0.005%20V%200%20c%205.09692%2C6.4164715%209.92323%2C13.494208%2013.621%2C19.449%20-5.651%2C9.62%20-12.575%2C18.217%20-19.976%2C26.182%20-6.864%2C-3.455%20-13.531%2C-7.369%20-19.828%2C-11.534%20-3.151%2C3.132%20-6.7%2C5.694%20-10.186%2C8.372%20-3.425%2C2.751%20-7.285%2C4.768%20-10.946%2C7.118%201.09%2C8.117%201.629%2C16.108%201.846%2C24.448%20-9.446%2C4.754%20-19.519%2C7.906%20-29.708%2C10.17%20-4.068%2C-6.837%20-7.788%2C-14.241%20-11.028%2C-21.479%20-3.842%2C0.642%20-7.702%2C0.88%20-11.567%2C0.926%20v%200.006%20c%20-0.027%2C0%20-0.052%2C-0.006%20-0.075%2C-0.006%20-0.024%2C0%20-0.049%2C0.006%20-0.073%2C0.006%20V%2063.652%20C%2093.903%2C63.606%2090.046%2C63.368%2086.203%2C62.726%2082.965%2C69.964%2079.247%2C77.368%2075.173%2C84.205%2064.989%2C81.941%2054.915%2C78.789%2045.47%2C74.035%2045.686%2C65.695%2046.225%2C57.704%2047.318%2C49.587%2043.65%2C47.237%2039.795%2C45.22%2036.369%2C42.469%2032.888%2C39.791%2029.333%2C37.229%2026.181%2C34.097%2019.884%2C38.262%2013.219%2C42.176%206.353%2C45.631%20-1.048%2C37.666%20-7.968%2C29.069%20-13.621%2C19.449%20-9.1783421%2C12.475308%20-4.4130298%2C5.4661124%200%2C0%20Z%22%20transform%3D%22translate(126.806%20346.045)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23478cbf%22%20d%3D%22m%200%2C0%20-1.121%2C-16.063%20c%20-0.135%2C-1.936%20-1.675%2C-3.477%20-3.611%2C-3.616%20l%20-38.555%2C-2.751%20c%20-0.094%2C-0.007%20-0.188%2C-0.01%20-0.281%2C-0.01%20-1.916%2C0%20-3.569%2C1.406%20-3.852%2C3.33%20l%20-2.211%2C14.994%20H%20-81.09%20l%20-2.211%2C-14.994%20c%20-0.297%2C-2.018%20-2.101%2C-3.469%20-4.133%2C-3.32%20l%20-38.555%2C2.751%20c%20-1.936%2C0.139%20-3.476%2C1.68%20-3.611%2C3.616%20L%20-130.721%2C0%20-163.268%2C3.138%20c%200.015%2C-3.498%200.06%2C-7.33%200.06%2C-8.093%200%2C-34.374%2043.605%2C-50.896%2097.781%2C-51.086%20h%200.066%200.067%20c%2054.176%2C0.19%2097.766%2C16.712%2097.766%2C51.086%200%2C0.777%200.047%2C4.593%200.063%2C8.093%20z%22%20transform%3D%22translate(311.403%20266.884)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23fff%22%20d%3D%22m%200%2C0%20c%200%2C-12.052%20-9.765%2C-21.815%20-21.813%2C-21.815%20-12.042%2C0%20-21.81%2C9.763%20-21.81%2C21.815%200%2C12.044%209.768%2C21.802%2021.81%2C21.802%20C%20-9.765%2C21.802%200%2C12.044%200%2C0%22%20transform%3D%22translate(204.114%20318.938)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23414042%22%20d%3D%22m%200%2C0%20c%200%2C-7.994%20-6.479%2C-14.473%20-14.479%2C-14.473%20-7.996%2C0%20-14.479%2C6.479%20-14.479%2C14.473%200%2C7.994%206.483%2C14.479%2014.479%2C14.479%20C%20-6.479%2C14.479%200%2C7.994%200%2C0%22%20transform%3D%22translate(198.177%20317.474)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23fff%22%20d%3D%22m%200%2C0%20c%20-3.878%2C0%20-7.021%2C2.858%20-7.021%2C6.381%20v%2020.081%20c%200%2C3.52%203.143%2C6.381%207.021%2C6.381%203.878%2C0%207.028%2C-2.861%207.028%2C-6.381%20V%206.381%20C%207.028%2C2.858%203.878%2C0%200%2C0%22%20transform%3D%22translate(237.475%20292.02)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23fff%22%20d%3D%22m%200%2C0%20c%200%2C-12.052%209.765%2C-21.815%2021.815%2C-21.815%2012.041%2C0%2021.808%2C9.763%2021.808%2C21.815%200%2C12.044%20-9.767%2C21.802%20-21.808%2C21.802%20C%209.765%2C21.802%200%2C12.044%200%2C0%22%20transform%3D%22translate(270.84%20318.938)scale(1.13105)%22%2F%3E%3Cpath%20fill%3D%22%23414042%22%20d%3D%22m%200%2C0%20c%200%2C-7.994%206.477%2C-14.473%2014.471%2C-14.473%208.002%2C0%2014.479%2C6.479%2014.479%2C14.473%200%2C7.994%20-6.477%2C14.479%20-14.479%2C14.479%20C%206.477%2C14.479%200%2C7.994%200%2C0%22%20transform%3D%22translate(276.778%20317.474)scale(1.13105)%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E" alt="Godot Engine">
+          <p class="eyebrow">BlackNode Engine &middot; Godot 4.7.2</p>
+          <h1>Make a game right here, in one tab.</h1>
+          <p class="lede">The full official <b>Godot Engine</b> editor &mdash; scene tree, script editor, inspector, the project manager and the game runner &mdash; compiled to WebAssembly and running right here. It starts on its own: no start button, nothing to install.</p>
+          <div class="cta">
+            <button id="launchBtn" class="btn btnPrimary btnBig"><span class="ico">&#9654;</span>Start the editor</button>
+            <a id="openLinkHome" class="btn btnBig" target="_blank" rel="noopener"><span class="ico">&#8599;</span>Open in new tab</a>
+          </div>
+          <label class="autoRow"><input type="checkbox" id="autoChk">Start the editor automatically when this page loads</label>
+          <p class="fine">The very first run downloads the engine (<b>~92&nbsp;MB</b>) and caches it in this browser, so later loads start almost instantly. Projects you create are saved in this browser, tied to this page.</p>
+        </div>
+
+        <aside class="side">
+          <div class="card">
+            <h2>Compatibility check</h2>
+            <ul id="checkList" class="checkList"></ul>
+            <p id="verdict" class="verdict"></p>
+          </div>
+          <div class="card">
+            <h2>Good to know</h2>
+            <ul class="bullets">
+              <li>Works on phones and tablets too &mdash; open the &#9776; menu for controls, use <b>Keys</b> for the on-screen keyboard, rotate to landscape for more room.</li>
+              <li>The engine runs on shared-memory worker threads, so it needs a cross-origin-isolated page (this one is).</li>
+              <li>Press <b>F5</b> in the editor to run your game &mdash; a <b>Game</b> tab appears next to <b>Editor</b>.</li>
+              <li>Intended for learning and prototyping; export from the native editor for real projects.</li>
+              <li>Preload an existing project as a ZIP from the project manager's Import dialog.</li>
+            </ul>
+            <div class="tinyLinks">
+              <button id="clearCacheBtn" class="unstyled">Clear cached engine files</button>
+              <button id="clearDataBtn" class="unstyled">Delete saved projects</button>
+              <a href="https://docs.godotengine.org/en/stable/tutorials/editor/using_the_web_editor.html" target="_blank" rel="noopener">Web editor docs</a>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section id="editorPane" class="editorPane" hidden>
+      <div id="editorWrap" class="canvasWrap"><canvas id="editorCanvas" tabindex="1">HTML5 canvas is required to run the editor.</canvas></div>
+      <div id="gameWrap" class="canvasWrap" hidden><canvas id="gameCanvas" tabindex="2">HTML5 canvas is required to run the game.</canvas></div>
+
+      <input id="kbHack" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" aria-hidden="true" tabindex="-1">
+      <div id="tabBar" class="tabBar" hidden>
+        <button id="tabEditorBtn" class="tabBtn">Editor</button>
+        <button id="tabGameBtn" class="tabBtn" disabled>Game</button>
+        <button id="closeGameBtn" class="tabClose" title="Stop the running game">&#215;</button>
+      </div>
+
+      <div id="loadOverlay" class="overlay">
+        <div id="ovSpinner" class="spinner"></div>
+        <div class="overlayTitle" id="ovTitle">Starting Godot</div>
+        <div id="ovProgressWrap" class="progressWrap"><div id="ovProgress" class="progressBar"></div></div>
+        <div class="overlaySub" id="ovSub"></div>
+        <div class="ovNotice" id="ovNotice" hidden></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="statusbar">
+    <span class="chip"><span class="dot" id="strDot"></span><span id="strText">checking environment&hellip;</span></span>
+    <span class="chip hideM" id="cacheText"></span>
+    <span class="right">
+      <span id="verText" class="chip"></span>
+      <span class="sep">|</span>
+      <a href="https://godotengine.org" target="_blank" rel="noopener">godotengine.org</a>
+      <a href="https://editor.godotengine.org/releases/" target="_blank" rel="noopener">all builds</a>
+    </span>
+  </footer>
+</div>
+
+<!-- Demo project bundle: the Cookie Clicker project that is installed into the
+     editor's filesystem on first load. Rebuild after editing the sources in
+     src/projects/cookie-clicker/ with:
+       execute_js: read every file in DEMO_FILE_NAMES and write
+       "window.COOKIE_CLICKER_DEMO = {version:N, files:{...}}"
+       to a .js file, then upload_file it and update this src.
+     Bundle version 7 (11 files: project.godot, main.tscn, main.gd, game_data.gd,
+     cookie_button.gd, golden_cookie.gd, building_icon.gd, building_row.gd,
+     building_row.tscn, upgrade_tile.gd, upgrade_tile.tscn). -->
+<script src="bundles/cookie-clicker.js"></script>
+<!-- Crimson Keep bundle: the Godot port of perchance.org/crimson-keep installed
+     alongside the demo above. Rebuild after editing src/projects/crimson-keep/
+     with: execute_js: read every file in CK_FILE_NAMES and write
+       "window.CRIMSON_KEEP_DEMO = {version:N, files:{...}}"
+     to a .js file, then upload_file it and update this src.
+     Bundle version 10 (19 code files + 321 art files with original relative paths). Faithful UI: pixel font, menu/operator panel, HUD, minimap, crosshair styles, all screens. Full in-game menu (mode,
+     difficulty, sector, size, seed), pause/map/pack/death/win screens. -->
+<script src="bundles/crimson-keep.js"></script>
+<!-- JS Bridge bundle: demo project showing how GDScript imports and calls a
+     JavaScript ES module via JavaScriptBridge. Rebuild after editing
+     src/projects/js-bridge/ with: execute_js: read every file in
+     JB_FILE_NAMES and write "window.JS_BRIDGE_DEMO = {version:N, files:{...}}"
+     to a .js file, then upload_file it and update this src.
+     Bundle version 1 (4 files: project.godot, main.tscn, main.gd, godotjs_module.js). -->
+<script src="bundles/js-bridge.js"></script>
+<script>
+// window.GodotJs - page-side JS helpers for GDScript (JavaScriptBridge).
+// Used by the bundled js-bridge demo project: main.gd reaches these via
+// JavaScriptBridge.get_interface("GodotJs") / JavaScriptBridge.eval().
+// eval() is synchronous, so async work (import(), fetch()) is split in two:
+// start it with one call, then poll the `last*` field the promise fills in.
+window.GodotJs = {
+  version: 1,
+  hello: function (who) { return "hello, " + who + "!"; },
+  add: function (a, b) { return Number(a) + Number(b); },
+  pageInfo: function () {
+    return (typeof navigator !== "undefined" ? navigator.language : "?") + " @ " +
+      (typeof location !== "undefined" ? location.hostname : "?");
+  },
+  localGet: function (key) {
+    try { return window.localStorage.getItem(String(key)); } catch (e) { return null; }
+  },
+  localSet: function (key, value) {
+    try { window.localStorage.setItem(String(key), String(value)); return true; }
+    catch (e) { return false; }
+  },
+  localRemove: function (key) {
+    try { window.localStorage.removeItem(String(key)); return true; }
+    catch (e) { return false; }
+  },
+  lastImport: null,
+  lastImportError: null,
+  lastModule: null,
+  importModule: function (url) {
+    var self = window.GodotJs;
+    self.lastImport = null;
+    self.lastImportError = null;
+    Promise.resolve().then(function () { return import(url); }).then(function (mod) {
+      self.lastModule = mod;
+      var info = {};
+      var keys = Object.keys(mod);
+      for (var i = 0; i < keys.length; i++) info[keys[i]] = typeof mod[keys[i]];
+      self.lastImport = JSON.stringify(info);
+    }).catch(function (err) { self.lastImportError = String(err); });
+    return "loading";
+  },
+  callExport: function (name, arg) {
+    var m = window.GodotJs.lastModule;
+    if (!m) return "no-module";
+    var fn = m[name];
+    if (typeof fn !== "function") return "not-a-function";
+    try { return fn(arg); } catch (e) { return "error:" + e; }
+  },
+  readExport: function (name) {
+    var m = window.GodotJs.lastModule;
+    if (!m) return "no-module";
+    var v = m[name];
+    var t = typeof v;
+    if (t === "number" || t === "string" || t === "boolean") return v;
+    return "[" + t + "]";
+  },
+  lastFetch: null,
+  lastFetchError: null,
+  fetchText: function (url) {
+    var self = window.GodotJs;
+    self.lastFetch = null;
+    self.lastFetchError = null;
+    fetch(url).then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.text();
+    }).then(function (t) { self.lastFetch = t; })
+      .catch(function (err) { self.lastFetchError = String(err); });
+    return "loading";
+  }
+};
+</script>
+<script>
+(function () {
+  "use strict";
+
+  var VER_KEY = "godot-web-editor/version";
+  var AUTO_KEY = "godot-web-editor/autolaunch";
+  var CACHE_NAME = "godot-web-editor-assets";
+
+  function $(id) { return document.getElementById(id); }
+  var appEl = $("appEl"), homePane = $("homePane"), editorPane = $("editorPane");
+  var editorWrap = $("editorWrap"), gameWrap = $("gameWrap");
+  var editorCanvas = $("editorCanvas"), gameCanvas = $("gameCanvas");
+  var overlay = $("loadOverlay"), ovSpinner = $("ovSpinner"), ovTitle = $("ovTitle");
+  var ovProgressWrap = $("ovProgressWrap"), ovProgress = $("ovProgress");
+  var ovSub = $("ovSub"), ovNotice = $("ovNotice");
+  var tabBar = $("tabBar"), tabEditorBtn = $("tabEditorBtn"), tabGameBtn = $("tabGameBtn"), closeGameBtn = $("closeGameBtn");
+  var versionSel = $("versionSel"), openLink = $("openLink"), openLinkHome = $("openLinkHome"), autoChk = $("autoChk");
+  var homeBtn = $("homeBtn"), reloadBtn = $("reloadBtn"), fsBtn = $("fsBtn"), brandBtn = $("brandBtn");
+  var cacheText = $("cacheText");
+
+  /* ============================ config ============================ */
+
+  function readVersions() {
+    var out = [];
+    try {
+      var items = root.versions.selectAll;
+      for (var i = 0; i < items.length; i++) {
+        var parts = String(items[i].evaluateItem).split("@");
+        if (parts.length >= 2) out.push([parts[0].trim(), parts.slice(1).join("@").trim()]);
+      }
+    } catch (e) {}
+    return out.length ? out : [["latest", "Latest"]];
+  }
+  var versions = readVersions();
+  var origin = root.editorOrigin;
+  var engineFiles = [];
+  try { engineFiles = root.engineFiles.selectAll.map(function (n) { return String(n.evaluateItem).trim(); }); } catch (e) {}
+  if (!engineFiles.length) engineFiles = ["godot.editor.js", "godot.editor.wasm"];
+
+  var JS_FILE = "godot.editor.js";
+  var WASM_FILE = "godot.editor.wasm";
+  var WORKLET_FILES = engineFiles.filter(function (f) { return /\.audio\.(position\.)?worklet\.js$/.test(f); });
+
+  // ---- Bundled demo project (created in the editor's persistent filesystem) ----
+  // The project ships as real files in src/projects/cookie-clicker/ and is bundled
+  // into a small JS file (loaded by the <script> tag near the end of this document)
+  // so installing it never depends on fetching src/ paths - those resolve against the
+  // host page's <base> and fail. See the note on that <script> tag for the rebuild recipe.
+  var DEMO_DIR = "/home/web_user/cookie-clicker";       // where the demo is installed (visible in the project manager)
+  var DEMO_SRC = "src/projects/cookie-clicker/";        // shipped source of the project (fallback only)
+  var DEMO_FILE_NAMES = ["project.godot", "main.tscn", "main.gd", "game_data.gd", "cookie_button.gd", "golden_cookie.gd", "building_icon.gd", "building_row.gd", "building_row.tscn", "upgrade_tile.gd", "upgrade_tile.tscn"];
+  var DEMO_MARKER = "/home/web_user/.cookie-clicker-demo.json"; // records the installed version + file hashes
+  var CK_DIR = "/home/web_user/crimson-keep";
+  var CK_SRC = "src/projects/crimson-keep/";
+  var CK_FILE_NAMES = ["README.md","SPEC.md","TODO.md","data_biomes.gd","data_demons.gd","data_difficulty.gd","data_elements.gd","data_weapons.gd","engine_native.gd","hud.gd","level.gd","main.gd","main.tscn","map_view.gd","player.gd","project.godot","screens.gd","state.gd","ui_kit.gd"];
+  var CK_BIN_NAMES = ["chest/chest.png","cursor.png","enemies/modelA_texture.png","enemies/modelB_texture.png","enemies/modelC_texture.png","enemies/modelD_texture.png","enemies/modelE_texture.png","enemies/modelF_texture.png","enemies/modelG_texture.png","enemies/modelH_texture.png","enemies/modelI_texture.png","enemies/modelJ_texture.png","enemies/modelK_texture.png","enemies/modelL_texture.png","enemies/modelM_texture.png","enemies/modelN_texture.png","enemies/modelO_texture.png","enemies/modelP_texture.png","enemies/modelQ_texture.png","enemies/modelR_texture.png","enemies/modelS_texture.png","enemies/modelT_texture.png","fonts/press-start-2p.ttf","monsters/archvile/sounds/arch_vile_death.ogg","monsters/archvile/sounds/arch_vile_scream.ogg","monsters/baron/sounds/baron_death.ogg","monsters/baron/sounds/baron_say.ogg","monsters/cacodemon/sounds/cacodemon_death.ogg","monsters/cacodemon/sounds/cacodemon_scream.ogg","monsters/pinky/sounds/pinky_death.ogg","monsters/pinky/sounds/pinky_yell.ogg","monsters/revenant/sounds/revenant_death.ogg","monsters/revenant/sounds/revenant_say.ogg","sounds/footsteps/step1.mp3","sounds/footsteps/step2.mp3","sounds/footsteps/step3.mp3","sounds/footsteps/step4.mp3","sounds/footsteps/step5.mp3","sounds/footsteps/step6.mp3","sounds/footsteps/step7.mp3","sounds/footsteps/step8.mp3","sounds/guns/breacher.mp3","sounds/guns/gatling.mp3","sounds/guns/gauss.mp3","sounds/guns/grenadier.mp3","sounds/guns/havoc.mp3","sounds/guns/longbow.mp3","sounds/guns/marauder.mp3","sounds/guns/ranger.mp3","sounds/guns/reaper.mp3","sounds/guns/rifle.mp3","sounds/guns/sabre.mp3","sounds/guns/shotgun.mp3","sounds/guns/sidearm.mp3","sounds/guns/trooper.mp3","sounds/guns/vanguard.mp3","sounds/guns/vigil.mp3","sounds/guns/viper.mp3","sprites/arsenal/aether.png","sprites/arsenal/amethyst.png","sprites/arsenal/annihilator.png","sprites/arsenal/astral.png","sprites/arsenal/augur.png","sprites/arsenal/barrage.png","sprites/arsenal/blitz.png","sprites/arsenal/carnage.png","sprites/arsenal/cataclysm.png","sprites/arsenal/conqueror.png","sprites/arsenal/crossfire.png","sprites/arsenal/cyclone.png","sprites/arsenal/deadeye.png","sprites/arsenal/decimator.png","sprites/arsenal/demolisher.png","sprites/arsenal/destructor.png","sprites/arsenal/devastator.png","sprites/arsenal/eidolon.png","sprites/arsenal/executioner.png","sprites/arsenal/exterminator.png","sprites/arsenal/flenser.png","sprites/arsenal/fusillade.png","sprites/arsenal/gauntlet.png","sprites/arsenal/gluon.png","sprites/arsenal/glyph.png","sprites/arsenal/headhunter.png","sprites/arsenal/helix.png","sprites/arsenal/inquisitor.png","sprites/arsenal/judicator.png","sprites/arsenal/lepton.png","sprites/arsenal/longshot.png","sprites/arsenal/mayhem.png","sprites/arsenal/military_knife.png","sprites/arsenal/mutilator.png","sprites/arsenal/obliterator.png","sprites/arsenal/omen.png","sprites/arsenal/onslaught.png","sprites/arsenal/onyx.png","sprites/arsenal/oracle.png","sprites/arsenal/overwatch.png","sprites/arsenal/peacemaker.png","sprites/arsenal/phantom.png","sprites/arsenal/prism.png","sprites/arsenal/quark.png","sprites/arsenal/rampage.png","sprites/arsenal/ravage.png","sprites/arsenal/ripper.png","sprites/arsenal/ruinator.png","sprites/arsenal/rune.png","sprites/arsenal/rupture.png","sprites/arsenal/salvo.png","sprites/arsenal/saurian.png","sprites/arsenal/seer.png","sprites/arsenal/shredder.png","sprites/arsenal/sidewinder.png","sprites/arsenal/sigil.png","sprites/arsenal/skirmish.png","sprites/arsenal/slaughter.png","sprites/arsenal/spectre.png","sprites/arsenal/starfall.png","sprites/arsenal/subjugator.png","sprites/arsenal/tachyon.png","sprites/arsenal/talisman.png","sprites/arsenal/vanquisher.png","sprites/arsenal/vantage.png","sprites/arsenal/vesper.png","sprites/arsenal/vortex.png","sprites/arsenal/warp.png","sprites/arsenal/windrunner.png","sprites/arsenal/xenon.png","sprites/arsenal/zephyr.png","sprites/fx/impact.png","sprites/overhaul/item_health_h1.png","sprites/overhaul/item_health_h2.png","sprites/overhaul/item_health_h3.png","sprites/overhaul/item_pick_vial.png","sprites/overhaul/wb_assembled02_heavy1.png","sprites/overhaul/wb_assembled02_heavy10.png","sprites/overhaul/wb_assembled02_heavy2.png","sprites/overhaul/wb_assembled02_heavy3.png","sprites/overhaul/wb_assembled02_heavy4.png","sprites/overhaul/wb_assembled02_heavy5.png","sprites/overhaul/wb_assembled02_heavy6.png","sprites/overhaul/wb_assembled02_heavy8.png","sprites/overhaul/wb_assembled02_heavy9.png","sprites/overhaul/wb_assembled02_laser1.png","sprites/overhaul/wb_assembled02_laser10.png","sprites/overhaul/wb_assembled02_laser11.png","sprites/overhaul/wb_assembled02_laser12.png","sprites/overhaul/wb_assembled02_laser13.png","sprites/overhaul/wb_assembled02_laser14.png","sprites/overhaul/wb_assembled02_laser2.png","sprites/overhaul/wb_assembled02_laser3.png","sprites/overhaul/wb_assembled02_laser4.png","sprites/overhaul/wb_assembled02_laser5.png","sprites/overhaul/wb_assembled02_laser6.png","sprites/overhaul/wb_assembled02_laser7.png","sprites/overhaul/wb_assembled02_laser8.png","sprites/overhaul/wb_assembled02_laser9.png","sprites/overhaul/wb_assembled02_pistol1.png","sprites/overhaul/wb_assembled02_pistol10.png","sprites/overhaul/wb_assembled02_pistol11.png","sprites/overhaul/wb_assembled02_pistol12.png","sprites/overhaul/wb_assembled02_pistol13.png","sprites/overhaul/wb_assembled02_pistol14.png","sprites/overhaul/wb_assembled02_pistol15.png","sprites/overhaul/wb_assembled02_pistol16.png","sprites/overhaul/wb_assembled02_pistol17.png","sprites/overhaul/wb_assembled02_pistol18.png","sprites/overhaul/wb_assembled02_pistol3.png","sprites/overhaul/wb_assembled02_pistol4.png","sprites/overhaul/wb_assembled02_pistol5.png","sprites/overhaul/wb_assembled02_pistol6.png","sprites/overhaul/wb_assembled02_pistol7.png","sprites/overhaul/wb_assembled02_pistol8.png","sprites/overhaul/wb_assembled02_pistol9.png","sprites/overhaul/wb_assembled02_pistol_heavy.png","sprites/overhaul/wb_assembled02_pistol_ice.png","sprites/overhaul/wb_assembled02_rifle1.png","sprites/overhaul/wb_assembled02_rifle10.png","sprites/overhaul/wb_assembled02_rifle11.png","sprites/overhaul/wb_assembled02_rifle12.png","sprites/overhaul/wb_assembled02_rifle13.png","sprites/overhaul/wb_assembled02_rifle14.png","sprites/overhaul/wb_assembled02_rifle15.png","sprites/overhaul/wb_assembled02_rifle16.png","sprites/overhaul/wb_assembled02_rifle17.png","sprites/overhaul/wb_assembled02_rifle18.png","sprites/overhaul/wb_assembled02_rifle19.png","sprites/overhaul/wb_assembled02_rifle2.png","sprites/overhaul/wb_assembled02_rifle20.png","sprites/overhaul/wb_assembled02_rifle21.png","sprites/overhaul/wb_assembled02_rifle22.png","sprites/overhaul/wb_assembled02_rifle23.png","sprites/overhaul/wb_assembled02_rifle24.png","sprites/overhaul/wb_assembled02_rifle25.png","sprites/overhaul/wb_assembled02_rifle3.png","sprites/overhaul/wb_assembled02_rifle4.png","sprites/overhaul/wb_assembled02_rifle5.png","sprites/overhaul/wb_assembled02_rifle6.png","sprites/overhaul/wb_assembled02_rifle7.png","sprites/overhaul/wb_assembled02_rifle8.png","sprites/overhaul/wb_assembled02_rifle9.png","sprites/overhaul/wb_assembled02_rifle_combat.png","sprites/overhaul/wb_assembled02_rifle_heavy.png","sprites/overhaul/wb_assembled02_rifle_ice.png","sprites/overhaul/wb_assembled02_rifle_marksman.png","sprites/overhaul/wb_assembled02_rifle_unique1.png","sprites/overhaul/wb_assembled02_shotgun1.png","sprites/overhaul/wb_assembled02_shotgun10.png","sprites/overhaul/wb_assembled02_shotgun2.png","sprites/overhaul/wb_assembled02_shotgun3.png","sprites/overhaul/wb_assembled02_shotgun4.png","sprites/overhaul/wb_assembled02_shotgun5.png","sprites/overhaul/wb_assembled02_shotgun6.png","sprites/overhaul/wb_assembled02_shotgun7.png","sprites/overhaul/wb_assembled02_shotgun8.png","sprites/overhaul/wb_assembled02_shotgun9.png","sprites/overhaul/wb_assembled02_shotgun_heavy.png","sprites/overhaul/wb_assembled02_shotgun_ice.png","sprites/overhaul/wb_assembled02_unique1.png","sprites/overhaul/wb_assembled02_unique2.png","sprites/overhaul/wb_assembled02_unique3.png","textures/cavern/c0.png","textures/cavern/f0.png","textures/cavern/f1.png","textures/cavern/w0.png","textures/cavern/w1.png","textures/cavern/w2.png","textures/cavern/w3.png","textures/cavern/w4.png","textures/cavern/w5.png","textures/cavern/w6.png","textures/horror/f0.png","textures/horror/f1.png","textures/horror/f2.png","textures/horror/sprites/bu0.png","textures/horror/sprites/bu1.png","textures/horror/sprites/bu2.png","textures/horror/sprites/tr0.png","textures/horror/sprites/tr1.png","textures/horror/sprites/tr2.png","textures/horror/sprites/tr3.png","textures/horror/sprites/tr4.png","textures/horror/w0.png","textures/horror/w1.png","textures/horror/w2.png","textures/horror/w3.png","textures/horror/w4.png","textures/keep/c0.png","textures/keep/f0.png","textures/keep/f1.png","textures/keep/w0.png","textures/keep/w1.png","textures/keep/w2.png","textures/keep/w3.png","textures/keep/w4.png","textures/keep/w5.png","textures/keep/w6.png","textures/outdoor/f0.png","textures/outdoor/f1.png","textures/outdoor/g0.png","textures/outdoor/g1.png","textures/outdoor/g2.png","textures/outdoor/g3.png","textures/outdoor/g4.png","textures/outdoor/g5.png","textures/outdoor/g6.png","textures/outdoor/sprites/bu0.png","textures/outdoor/sprites/bu1.png","textures/outdoor/sprites/bu2.png","textures/outdoor/sprites/tr0.png","textures/outdoor/sprites/tr1.png","textures/outdoor/sprites/tr2.png","textures/outdoor/sprites/tr3.png","textures/outdoor/sprites/tr4.png","textures/outdoor/w0.png","textures/outdoor/w1.png","textures/outdoor/w2.png","textures/outdoor/w3.png","textures/outdoor/w4.png","textures/outdoor/w5.png","textures/outdoor/w6.png","textures/outdoor/w7.png","textures/planets/p0.png","textures/planets/p1.png","textures/planets/p2.png","textures/urban/decals/graf0.png","textures/urban/decals/graf1.png","textures/urban/decals/graf10.png","textures/urban/decals/graf11.png","textures/urban/decals/graf2.png","textures/urban/decals/graf3.png","textures/urban/decals/graf4.png","textures/urban/decals/graf5.png","textures/urban/decals/graf6.png","textures/urban/decals/graf7.png","textures/urban/decals/graf8.png","textures/urban/decals/graf9.png","textures/urban/f0.png","textures/urban/f1.png","textures/urban/f2.png","textures/urban/f3.png","textures/urban/f4.png","textures/urban/f5.png","textures/urban/sprites/bu0.png","textures/urban/sprites/bu1.png","textures/urban/sprites/bu2.png","textures/urban/sprites/bu3.png","textures/urban/sprites/tr0.png","textures/urban/sprites/tr1.png","textures/urban/sprites/tr2.png","textures/urban/sprites/tr3.png","textures/urban/sprites/tr4.png","textures/urban/w0.png","textures/urban/w1.png","textures/urban/w2.png","textures/urban/w3.png","textures/urban/w4.png","textures/urban/w5.png","textures/urban/w6.png","textures/urban/w7.png","textures/urban/w8.png"];
+  var CK_MARKER = "/home/web_user/.crimson-keep-demo.json";
+  var JB_DIR = "/home/web_user/js-bridge";
+  var JB_SRC = "src/projects/js-bridge/";
+  var JB_FILE_NAMES = ["project.godot", "main.tscn", "main.gd", "godotjs_module.js"];
+  var JB_MARKER = "/home/web_user/.js-bridge-demo.json";
+  var PROJECTS_CFG = "/home/web_user/.local/share/godot/projects.cfg";
+  var IDB_NAME = "/home/web_user";                      // Godot's persistent FS (IDBFS) database
+
+  function labelFor(v) {
+    for (var i = 0; i < versions.length; i++) if (versions[i][0] === v) return versions[i][1];
+    return v;
+  }
+  function currentVersion() { return versionSel.value || root.defaultVersion || versions[0][0]; }
+  function urlFor(v) { return origin + v + "/"; }
+  function assetUrl(name) { return urlFor(currentVersion()) + name; }
+  function saveVersion(v) { try { localStorage.setItem(VER_KEY, v); } catch (e) {} }
+  function randomTip() { try { return root.tips.selectOne.evaluateItem; } catch (e) { return ""; } }
+  function escapeHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function fmtMB(bytes) { return (bytes / 1048576).toFixed(bytes < 10485760 ? 1 : 0) + " MB"; }
+
+  /* ---------- version dropdown ---------- */
+  for (var vi = 0; vi < versions.length; vi++) {
+    var opt = document.createElement("option");
+    opt.value = versions[vi][0];
+    opt.textContent = versions[vi][1];
+    versionSel.appendChild(opt);
+  }
+  var savedVer = null;
+  try { savedVer = localStorage.getItem(VER_KEY); } catch (e) {}
+  if (savedVer && versions.some(function (v) { return v[0] === savedVer; })) versionSel.value = savedVer;
+  else versionSel.value = (root.defaultVersion && versions.some(function (v) { return v[0] === root.defaultVersion; }))
+    ? root.defaultVersion : versions[0][0];
+
+  function updateLinks() { var h = "https://editor.godotengine.org/releases/" + currentVersion() + "/"; openLink.href = h; openLinkHome.href = h; }
+  function updateVersionText() { $("verText").textContent = "Godot " + labelFor(currentVersion()); }
+
+  /* ===================== compatibility check ====================== */
+
+  function hasWebGL2() {
+    try { return !!document.createElement("canvas").getContext("webgl2"); } catch (e) { return false; }
+  }
+  function runChecks() {
+    var threads = navigator.hardwareConcurrency || 0;
+    var checks = [
+      { label: "Cross-origin isolation", ok: window.crossOriginIsolated === true, hard: true, why: "the engine runs on shared-memory worker threads" },
+      { label: "SharedArrayBuffer", ok: typeof SharedArrayBuffer !== "undefined", hard: true, why: "required by those threads" },
+      { label: "WebGL 2", ok: hasWebGL2(), hard: true, why: "renders the editor UI and your game" },
+      { label: "Secure context", ok: window.isSecureContext !== false, hard: true, why: "the page must be served over HTTPS" },
+      { label: "WebAssembly", ok: typeof WebAssembly === "object", hard: true, why: "the engine is compiled to WASM" },
+      { label: "Storage for the engine cache", ok: typeof caches !== "undefined", hard: false, why: "so the 92 MB engine is only downloaded once" },
+      { label: (threads ? ("CPU threads (" + threads + ")") : "CPU threads"), ok: threads >= 4, hard: false, why: "4+ cores recommended for a smooth editor" }
+    ];
+    var list = $("checkList");
+    list.innerHTML = "";
+    var hardFail = false, softWarn = false;
+    checks.forEach(function (c) {
+      var li = document.createElement("li");
+      var mark = c.ok ? "ok" : (c.hard ? "bad" : "warn");
+      if (!c.ok) { if (c.hard) hardFail = true; else softWarn = true; }
+      li.innerHTML = '<span class="dot ' + mark + '">' + (c.ok ? "\u2713" : "\u2715") + "</span>" +
+        "<span>" + escapeHtml(c.label) + '<br><span class="why">' + escapeHtml(c.why) + "</span></span>";
+      list.appendChild(li);
+    });
+    var verdict = $("verdict");
+    if (hardFail) {
+      verdict.className = "verdict bad";
+      verdict.textContent = "This browser or page can't run the engine directly. Try Chrome or Edge (desktop or Android), Safari on iPhone/iPad, or Firefox \u2014 or use \u201cOpen in new tab\u201d.";
+    } else if (softWarn) {
+      verdict.className = "verdict warn";
+      verdict.textContent = MOBILE ? "Ready. On phones expect a slower editor \u2014 landscape + Wi-Fi works best." : "Ready, but your machine is on the light side \u2014 expect the editor to feel sluggish.";
+    } else {
+      verdict.className = "verdict ok";
+      verdict.textContent = MOBILE ? "All set. Tap Start when you're on Wi-Fi (first run downloads ~92 MB)." : "All set. The editor starts automatically.";
+    }
+    var dot = $("strDot");
+    dot.className = "dot " + (hardFail ? "bad" : (softWarn ? "warn" : "ok"));
+    $("strText").textContent = hardFail
+      ? "Host environment unsupported"
+      : "Host is cross-origin isolated" + (threads ? " \u00b7 " + threads + " CPU threads" : "");
+    return !hardFail;
+  }
+
+  /* ========================= overlay UI =========================== */
+
+  function showOverlay(title, sub, opts) {
+    opts = opts || {};
+    overlay.hidden = false;
+    ovNotice.hidden = true;
+    ovSpinner.hidden = !!opts.noSpinner;
+    ovTitle.textContent = title || "";
+    ovSub.textContent = sub || "";
+    ovProgressWrap.hidden = !opts.progress;
+    if (opts.progress) {
+      ovProgress.classList.toggle("indet", !!opts.indeterminate);
+      ovProgress.style.width = (opts.pct == null ? "0" : opts.pct) + "%";
+    }
+  }
+  function hideOverlay() { overlay.hidden = true; }
+  function showBootError(err) {
+    overlay.hidden = false;
+    ovSpinner.hidden = true;
+    ovProgressWrap.hidden = true;
+    ovTitle.textContent = "Couldn't start the editor";
+    ovSub.textContent = "";
+    ovNotice.hidden = false;
+    var msg = err && (err.message || err) || "Unknown error";
+    ovNotice.innerHTML =
+      '<p class="errTitle">' + escapeHtml(msg) + "</p>" +
+      "<p>Check your connection (the engine is served from this site), then press <b>Restart</b>.</p>" +
+      '<p>You can always <a href="' + escapeHtml("https://editor.godotengine.org/releases/" + currentVersion() + "/") + '" target="_blank" rel="noopener">open the official web editor in a new tab</a>.</p>';
+  }
+
+  /* ======================== asset manager ======================== */
+
+  var cachePromise = null;
+  function openAssetCache() {
+    if (!cachePromise) {
+      cachePromise = (typeof caches === "undefined"
+        ? Promise.reject(new Error("no cache api"))
+        : caches.open(CACHE_NAME)).catch(function () { return null; });
+    }
+    return cachePromise;
+  }
+  var memoryFallback = {};
+
+  function sizeKey(url) { return "godot-web-editor/size/" + url; }
+  function rememberSize(url, bytes) { try { localStorage.setItem(sizeKey(url), String(bytes)); } catch (e) {} }
+  function recallSize(url) { try { return Number(localStorage.getItem(sizeKey(url))) || 0; } catch (e) { return 0; } }
+
+  /* Returns { get():Promise<Response>, bytes:number, cached:boolean } */
+  function sleepMs(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  async function ensureAsset(name, onBytes, tries) {
+    tries = tries || 3;
+    var lastErr = null;
+    for (var a = 0; a < tries; a++) {
+      try { return await ensureAssetOnce(name, onBytes); }
+      catch (e) {
+        lastErr = e;
+        if (a < tries - 1) {
+          if (typeof navigator !== "undefined" && navigator.onLine === false) throw new Error("You appear to be offline. Reconnect, then press Restart.");
+          await sleepMs(800 * (a + 1));
+        }
+      }
+    }
+    throw lastErr;
+  }
+  async function ensureAssetOnce(name, onBytes) {
+    var real = assetUrl(name);
+    var cache = await openAssetCache();
+
+    if (cache) {
+      var hit = await cache.match(real);
+      if (hit) return { get: function () { return cache.match(real); }, bytes: recallSize(real), cached: true };
+    } else if (memoryFallback[real]) {
+      var blob = memoryFallback[real];
+      return { get: function () { return Promise.resolve(new Response(blob)); }, bytes: blob.size, cached: true };
+    }
+
+    var resp = await root.superFetch(real);
+    if (!resp.ok) throw new Error("Download failed for " + name + " (HTTP " + resp.status + ")");
+    if (!resp.body) throw new Error("Download failed for " + name + " (no response body)");
+
+    var cloneForCache = cache ? resp.clone() : null;
+    var reader = resp.body.getReader();
+    var got = 0;
+    if (cache) {
+      var putPromise = cache.put(real, cloneForCache).catch(function () { /* quota exceeded: still serve this run */ });
+      while (true) { var r = await reader.read(); if (r.done) break; got += r.value.length; if (onBytes) onBytes(got); }
+      await putPromise;
+      rememberSize(real, got);
+      return { get: function () { return cache.match(real); }, bytes: got, cached: false };
+    }
+
+    var parts = [];
+    while (true) { var r2 = await reader.read(); if (r2.done) break; got += r2.value.length; parts.push(r2.value); if (onBytes) onBytes(got); }
+    var outBlob = new Blob(parts, { type: "application/wasm" });
+    memoryFallback[real] = outBlob;
+    rememberSize(real, got);
+    return { get: function () { return Promise.resolve(new Response(outBlob)); }, bytes: got, cached: false };
+  }
+
+  async function blobUrlFor(name) {
+    var a = await ensureAsset(name, null);
+    var r = await a.get();
+    return URL.createObjectURL(await r.blob());
+  }
+
+  /* ===================== engine integration ====================== */
+
+  var engineScriptUrl = null;   // blob URL the engine was loaded from (workers reuse it)
+  var engineAssets = null;      // { worklets: {name: blobUrl} }
+  var wasmGetter = null;        // serves godot.editor.wasm from cache for the engine's fetch()
+
+  function installFetchHook() {
+    if (installFetchHook.done) return;
+    installFetchHook.done = true;
+    var nativeFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      var url = typeof input === "string" ? input : (input && input.url) || "";
+      if (wasmGetter && url && url.indexOf(WASM_FILE) !== -1 && url.indexOf("proxy1") === -1 && url.indexOf("blob:") !== 0) {
+        return wasmGetter();
+      }
+      return nativeFetch(input, init);
+    };
+  }
+
+  // Godot's JS asks navigator.serviceWorker.getRegistration() at startup; the host page sets
+  // <base> to perchance.org, which makes that call reject with a cross-origin SecurityError.
+  function stubServiceWorkerProbe() {
+    try {
+      if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) {
+        navigator.serviceWorker.getRegistration = function () { return Promise.resolve(undefined); };
+      }
+    } catch (e) {}
+  }
+
+  // The engine resolves worklet paths to bare relative names (e.g.
+  // "godot.editor.audio.worklet.js"), which the browser then resolves against the
+  // page's <base> (perchance.org) and 404s. Rewrite them to the cached blob URLs.
+  function installWorkletHook() {
+    if (installWorkletHook.done) return;
+    installWorkletHook.done = true;
+    try {
+      if (!window.AudioWorklet) return;
+      var orig = window.AudioWorklet.prototype.addModule;
+      window.AudioWorklet.prototype.addModule = function (url, options) {
+        var name = String(url).split("/").pop();
+        if (engineAssets && engineAssets.worklets && engineAssets.worklets[name]) url = engineAssets.worklets[name];
+        return orig.call(this, url, options);
+      };
+    } catch (e) {}
+  }
+
+  function patchEnginePrototype(Engine) {
+    if (Engine.__perchancePatched) return;
+    Engine.__perchancePatched = true;
+    var origS = Engine.prototype.S;
+    Engine.prototype.S = function (baseName, wasmResponse) {
+      var cfg = origS.call(this, baseName, wasmResponse);
+      // let the canvas be captured (screenshots / previews) and tuned like the export shell does
+      cfg.webglcontextcreationattributes = {
+        alpha: false, depth: true, stencil: true, antialias: true,
+        premultipliedAlpha: true, preserveDrawingBuffer: true, powerPreference: "high-performance"
+      };
+      var origLocateFile = cfg.locateFile;
+      cfg.locateFile = function (name) {
+        var resolved = origLocateFile(name);
+        if (engineAssets && engineAssets.worklets[resolved]) return engineAssets.worklets[resolved];
+        return resolved;
+      };
+      return cfg;
+    };
+  }
+
+  async function loadEngineScript() {
+    if (window.Engine) return window.Engine;
+    var js = await ensureAsset(JS_FILE, null);
+    var resp = await js.get();
+    var text = await resp.text();
+    engineScriptUrl = URL.createObjectURL(new Blob([text], { type: "text/javascript" }));
+    await new Promise(function (resolve, reject) {
+      var s = document.createElement("script");
+      s.src = engineScriptUrl;
+      s.onload = resolve;
+      s.onerror = function () { reject(new Error("The engine script could not be loaded.")); };
+      document.head.appendChild(s);
+    });
+    if (!window.Engine) throw new Error("Engine script did not expose window.Engine");
+    return window.Engine;
+  }
+
+  /* ---------- canvas sizing (mirrors the official web shell) ---------- */
+  function sizeCanvas(canvas, wrap) {
+    var scale = cappedDPR();
+    var w = Math.max(1, wrap.clientWidth);
+    var h = Math.max(1, wrap.clientHeight);
+    canvas.width = Math.round(w * scale);
+    canvas.height = Math.round(h * scale);
+    canvas.style.width = w + "px";
+    canvas.style.height = h + "px";
+  }
+  function sizeAllCanvases() { sizeCanvas(editorCanvas, editorWrap); sizeCanvas(gameCanvas, gameWrap); }
+  window.addEventListener("resize", sizeAllCanvases);
+  try { if (window.visualViewport) visualViewport.addEventListener("resize", function () { sizeAllCanvases(); }); } catch (e) {}
+  window.addEventListener("orientationchange", function () { setTimeout(sizeAllCanvases, 250); });
+
+  // requestAnimationFrame never fires while the document is hidden (backgrounded tab),
+  // so wait a frame if one is coming but don't depend on it.
+  var nextFrame = (function () {
+    var raf = window.requestAnimationFrame;
+    if (!raf) return function (fn) { setTimeout(fn, 0); };
+    return function (fn) {
+      var done = false;
+      var run = function () { if (done) return; done = true; fn(); };
+      try { raf.call(window, function () { setTimeout(run, 0); }); } catch (e) { setTimeout(run, 0); }
+      setTimeout(run, 250);
+    };
+  })();
+  if (window.ResizeObserver) {
+    try { new ResizeObserver(sizeAllCanvases).observe(editorPane); } catch (e) {}
+  }
+
+  function replaceCanvas(canvas) {
+    var out = document.createElement("canvas");
+    out.id = canvas.id;
+    out.tabIndex = canvas.tabIndex;
+    out.textContent = canvas.textContent;
+    canvas.parentNode.replaceChild(out, canvas);
+    if (canvas.id === "editorCanvas") editorCanvas = out; else gameCanvas = out;
+    sizeAllCanvases();
+    return out;
+  }
+
+  /* ===================== editor / game lifecycle ================== */
+
+  var editor = null;        // Engine instance running the editor
+  var game = null;          // Engine instance running your project
+  var booting = false;
+  var editorOpen = false;
+  var OnEditorExit = null;  // called when the editor process exits (see Execute)
+
+  function isMobileDevice() {
+    try {
+      if (navigator.userAgentData && navigator.userAgentData.mobile) return true;
+      if (/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || "")) return true;
+      if (window.matchMedia && matchMedia("(pointer:coarse)").matches && Math.min(screen.width || 9999, screen.height || 9999) < 820) return true;
+    } catch (e) {}
+    return false;
+  }
+  var MOBILE = isMobileDevice();
+  function cappedDPR() {
+    var dpr = window.devicePixelRatio || 1;
+    return Math.min(dpr, MOBILE ? 1.75 : 2);
+  }
+  function enginePoolSizes() {
+    var hc = navigator.hardwareConcurrency || 4;
+    hc = Math.max(2, Math.min(hc, 24));
+    if (MOBILE) hc = Math.min(hc, 6);
+    try { if (navigator.deviceMemory && navigator.deviceMemory < 4) hc = Math.min(hc, 4); } catch (e) {}
+    return { emscriptenPoolSize: hc, godotPoolSize: Math.max(2, Math.min(8, Math.floor(hc / 2))) };
+  }
+  function ensureViewportMeta() {
+    try {
+      var h = document.head || document.getElementsByTagName("head")[0];
+      if (!h) return;
+      var m = h.querySelector('meta[name="viewport"]');
+      if (!m) { m = document.createElement("meta"); m.setAttribute("name", "viewport"); h.appendChild(m); }
+      if (!m.getAttribute("content")) m.setAttribute("content", "width=device-width, initial-scale=1, viewport-fit=cover");
+      else if (m.getAttribute("content").indexOf("viewport-fit") === -1) m.setAttribute("content", m.getAttribute("content") + ", viewport-fit=cover");
+    } catch (e) {}
+  }
+  var wakeLock = null;
+  function lockWake() {
+    try {
+      if (navigator.wakeLock && navigator.wakeLock.request) navigator.wakeLock.request("screen").then(function (l) { wakeLock = l; }).catch(function () {});
+    } catch (e) {}
+  }
+  function unlockWake() { try { if (wakeLock) wakeLock.release(); } catch (e) {} wakeLock = null; }
+
+  function setGameTabEnabled(on) {
+    tabGameBtn.disabled = !on;
+    closeGameBtn.disabled = !on;
+    tabBar.hidden = !on;
+  }
+  function showEditorTab() {
+    editorWrap.hidden = false;
+    gameWrap.hidden = true;
+    tabEditorBtn.classList.add("active");
+    tabGameBtn.classList.remove("active");
+    sizeAllCanvases();
+    if (editorCanvas) { try { editorCanvas.focus(); } catch (e) {} }
+  }
+  function showGameTab() {
+    editorWrap.hidden = true;
+    gameWrap.hidden = false;
+    tabGameBtn.classList.add("active");
+    tabEditorBtn.classList.remove("active");
+    sizeAllCanvases();
+    if (gameCanvas) { try { gameCanvas.focus(); } catch (e) {} }
+  }
+
+  // Ends the current game session and returns to the editor tab. Safe to call more
+  // than once; every failure path in Execute funnels through here so a crashed or
+  // aborted game never leaves `game` set (which would block relaunching).
+  function endGame() {
+    if (!game && gameWrap.hidden) return;
+    game = null;
+    replaceCanvas(gameCanvas);
+    setGameTabEnabled(false);
+    showEditorTab();
+  }
+
+  function gameConfig() {
+    var pool = enginePoolSizes();
+    return {
+      unloadAfterInit: false,
+      canvas: gameCanvas,
+      canvasResizePolicy: 1,
+      persistentPaths: ["/home/web_user"],
+      emscriptenPoolSize: pool.emscriptenPoolSize,
+      godotPoolSize: pool.godotPoolSize,
+      onPrint: function () { console.log.apply(console, ["[godot-game]"].concat([].slice.call(arguments))); },
+      onPrintError: function () { console.error.apply(console, ["[godot-game]"].concat([].slice.call(arguments))); },
+      onExit: endGame
+    };
+  }
+
+  function Execute(args) {
+    args = args || [];
+    var isEditor = args.indexOf("--editor") !== -1 || args.indexOf("-e") !== -1;
+    var isProjectManager = args.indexOf("--project-manager") !== -1;
+    var isGame = !isEditor && !isProjectManager;
+
+    if (isGame) {
+      if (game) { console.error("A game is already running \u2014 close it first."); return; }
+      setGameTabEnabled(true);
+      showGameTab();
+      game = new window.Engine(gameConfig());
+      showOverlay("Running your project", "Starting the game\u2026", { progress: true, indeterminate: true });
+      var runsDemo = args.some(function (a) { return String(a).indexOf(DEMO_DIR) !== -1; });
+      var runsCk = args.some(function (a) { return String(a).indexOf(CK_DIR) !== -1; });
+      var runsJb = args.some(function (a) { return String(a).indexOf(JB_DIR) !== -1; });
+      var failGame = function (err) { endGame(); showBootError(err); };
+      game.init().then(function () {
+        // A project-run engine has its own filesystem, freshly loaded from IndexedDB;
+        // make sure the bundled demo's files are there before booting into it.
+        var seedDemo = runsDemo ? installDemoInto(game) : Promise.resolve();
+        return seedDemo.then(function () {
+          return runsCk ? installCkInto(game) : undefined;
+        }).then(function () {
+          return runsJb ? installJbInto(game) : undefined;
+        }).then(function () {
+          if (!game || bootCancelled) return;
+          nextFrame(function () {
+            if (!game || bootCancelled) return;
+            game.start({ args: args, canvas: gameCanvas }).then(function () {
+              hideOverlay();
+              gameCanvas.focus();
+            }).catch(failGame);
+          });
+        });
+      }).catch(failGame);
+      return;
+    }
+
+    // A new editor process runs in the same canvas, so wait for the old one to exit first.
+    OnEditorExit = function () {
+      setTimeout(function () {
+        if (!editor) return;
+        editor.init().then(function () {
+          OnEditorExit = function () { goHome(); };
+          editor.start({ args: args, canvas: editorCanvas }).then(function () {
+            hideOverlay();
+            editorCanvas.focus();
+          }).catch(showBootError);
+        }).catch(showBootError);
+      }, 0);
+      OnEditorExit = null;
+    };
+  }
+
+  function editorConfig() {
+    var pool = enginePoolSizes();
+    return {
+      unloadAfterInit: false,
+      canvas: editorCanvas,
+      canvasResizePolicy: 0,
+      persistentPaths: ["/home/web_user"],
+      emscriptenPoolSize: pool.emscriptenPoolSize,
+      godotPoolSize: pool.godotPoolSize,
+      fileSizes: (function () { var o = {}; if (editorWasmBytes) o[WASM_FILE] = editorWasmBytes; return o; })(),
+      onProgress: function (current, total) {
+        if (overlay.hidden) return;
+        ovProgressWrap.hidden = false;
+        if (total > 0) {
+          ovProgress.classList.remove("indet");
+          ovProgress.style.width = (100 * Math.min(current, total) / total) + "%";
+          ovSub.textContent = fmtMB(current) + " / " + fmtMB(total) + " \u2014 decompressing the engine\u2026";
+        }
+      },
+      onExecute: Execute,
+      onPrint: function () { console.log.apply(console, ["[godot]"].concat([].slice.call(arguments))); },
+      onPrintError: function () { console.error.apply(console, ["[godot]"].concat([].slice.call(arguments))); },
+      onExit: function () {
+        replaceCanvas(editorCanvas);
+        var cb = OnEditorExit;
+        OnEditorExit = null;
+        if (cb) cb();
+      }
+    };
+  }
+
+  var editorWasmBytes = 0;
+
+  function showEditorPane() {
+    homePane.hidden = true;
+    editorPane.hidden = false;
+    editorOpen = true;
+    homeBtn.disabled = false;
+    sizeAllCanvases();
+    showEditorTab();
+    setGameTabEnabled(false);
+  }
+  function showHomePane() {
+    editorPane.hidden = true;
+    homePane.hidden = false;
+    editorOpen = false;
+    homeBtn.disabled = true;
+    tabBar.hidden = true;
+  }
+
+  /* --------------------- bundled demo project -------------------- */
+
+  // Godot persists /home/web_user through an IndexedDB-backed filesystem (IDBFS).
+  // The engine doesn't export its FS object, so we read the persisted copy straight
+  // out of IndexedDB (for merging projects.cfg and for idempotency), while writing
+  // new files with the engine's own copyToFS() during boot.
+
+  function idbDb() {
+    return new Promise(function (resolve, reject) {
+      var req = indexedDB.open(IDB_NAME);
+      req.onsuccess = function () { resolve(req.result); };
+      req.onerror = function () { reject(req.error); };
+    });
+  }
+  function idbKeys() {
+    return idbDb().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var r = db.transaction("FILE_DATA", "readonly").objectStore("FILE_DATA").getAllKeys();
+        r.onsuccess = function () { db.close(); resolve(r.result.map(String)); };
+        r.onerror = function () { db.close(); reject(r.error); };
+      });
+    }).catch(function () { return []; });
+  }
+  function idbReadText(path) {
+    return idbDb().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var r = db.transaction("FILE_DATA", "readonly").objectStore("FILE_DATA").get(path);
+        r.onsuccess = function () {
+          db.close();
+          var v = r.result;
+          if (!v || v.contents == null) { resolve(null); return; }
+          var c = v.contents;
+          var bytes = (c instanceof Uint8Array) ? c : Uint8Array.from(c);
+          resolve(new TextDecoder().decode(bytes));
+        };
+        r.onerror = function () { db.close(); reject(r.error); };
+      });
+    }).catch(function () { return null; });
+  }
+
+  // The directories IDBFS needs a record for: every ancestor of `path` below the mount
+  // point. (The mount point itself is created by the engine, so it's excluded.)
+  function neededFileDirs(path) {
+    var out = [];
+    var dir = path;
+    while (true) {
+      var cut = dir.lastIndexOf("/");
+      if (cut <= 0) break;
+      dir = dir.slice(0, cut);
+      if (dir.length <= IDB_NAME.length) break;
+      out.push(dir);
+    }
+    return out;
+  }
+
+  // Older builds of this page wrote records straight into Godot's IndexedDB filesystem
+  // and got two things wrong:
+  //   * `timestamp` was a plain number, but Godot's IDBFS calls Date#getTime() on it
+  //     while mounting /home/web_user, so the editor died with
+  //     "timestamp.getTime is not a function";
+  //   * no records were written for the directories holding the files, and IDBFS
+  //     doesn't create missing parents as it populates, so mounting failed with ENOENT
+  //     ("IndexedDB not available: No such file or directory") and the project then
+  //     showed up as missing in the project manager.
+  // Repair both in place before the engine opens the database. No-op once correct.
+  function repairLegacyIdb() {
+    return new Promise(function (resolve) {
+      var req;
+      try { req = indexedDB.open(IDB_NAME); } catch (e) { resolve(); return; }
+      req.onerror = function () { resolve(); };
+      req.onsuccess = function () {
+        var db = req.result;
+        if (!db.objectStoreNames.contains("FILE_DATA")) { db.close(); resolve(); return; }
+        var finish = function () { try { db.close(); } catch (e) {} resolve(); };
+        try {
+          var tx = db.transaction("FILE_DATA", "readwrite");
+          tx.oncomplete = finish;
+          tx.onerror = finish;
+          tx.onabort = finish;
+          var store = tx.objectStore("FILE_DATA");
+          var fileKeys = [];
+          var dirKeys = {};
+          var cur = store.openCursor();
+          cur.onsuccess = function () {
+            var cursor = cur.result;
+            if (!cursor) {
+              for (var i = 0; i < fileKeys.length; i++) {
+                var dirs = neededFileDirs(fileKeys[i]);
+                for (var j = 0; j < dirs.length; j++) {
+                  if (!Object.prototype.hasOwnProperty.call(dirKeys, dirs[j])) {
+                    dirKeys[dirs[j]] = true;
+                    store.put({ timestamp: new Date(), mode: 16895 }, dirs[j]);
+                  }
+                }
+              }
+              return;
+            }
+            var rec = cursor.value;
+            if (rec && rec.timestamp != null) {
+              if (!(rec.timestamp instanceof Date)) {
+                var t = Number(rec.timestamp);
+                rec.timestamp = new Date(isFinite(t) ? t : Date.now());
+                cursor.update(rec);
+              }
+              if (typeof rec.mode === "number") {
+                if ((rec.mode & 61440) === 16384) dirKeys[cursor.key] = true;
+                else fileKeys.push(cursor.key);
+              }
+            }
+            cursor.continue();
+          };
+        } catch (e) { finish(); }
+      };
+    });
+  }
+
+  // A small side database (independent of Godot's filesystem) that records which
+  // bundle version last wrote the project, plus per-file hashes. That lets us tell a
+  // pristine project (safe to refresh from a newer bundle) apart from one the user
+  // has edited (which must never be clobbered) without relying on Godot's IDBFS.
+  var META_DB = "cookie-clicker-meta";
+  function metaDb() {
+    return new Promise(function (resolve, reject) {
+      var req = indexedDB.open(META_DB, 1);
+      req.onupgradeneeded = function () {
+        if (!req.result.objectStoreNames.contains("kv")) req.result.createObjectStore("kv");
+      };
+      req.onsuccess = function () { resolve(req.result); };
+      req.onerror = function () { reject(req.error); };
+    });
+  }
+  function metaGet(key) {
+    return metaDb().then(function (db) {
+      return new Promise(function (resolve) {
+        var r = db.transaction("kv", "readonly").objectStore("kv").get(key);
+        r.onsuccess = function () { db.close(); resolve(r.result === undefined ? null : r.result); };
+        r.onerror = function () { db.close(); resolve(null); };
+      });
+    }).catch(function () { return null; });
+  }
+  function metaSet(key, value) {
+    return metaDb().then(function (db) {
+      return new Promise(function (resolve) {
+        var tx = db.transaction("kv", "readwrite");
+        tx.objectStore("kv").put(value, key);
+        tx.oncomplete = function () { db.close(); resolve(true); };
+        tx.onerror = function () { db.close(); resolve(false); };
+        tx.onabort = function () { db.close(); resolve(false); };
+      });
+    }).catch(function () { return false; });
+  }
+
+  // engine.copyToFS() writes into the engine's in-memory filesystem but does not flag
+  // it for Godot's IDBFS flush (OS_Web only syncs when Godot itself reports a change),
+  // so a project-run engine - which loads its filesystem from IndexedDB - can miss
+  // freshly installed files. Mirror the same file texts straight into the IndexedDB
+  // filesystem so that every engine sees the current version.
+  function idbWriteFiles(texts, markerText) {
+    return new Promise(function (resolve) {
+      var req = indexedDB.open(IDB_NAME);
+      req.onerror = function () { resolve(false); };
+      req.onsuccess = function () {
+        var db = req.result;
+        if (!db.objectStoreNames.contains("FILE_DATA")) { db.close(); resolve(false); return; }
+        var tx = db.transaction("FILE_DATA", "readwrite");
+        var store = tx.objectStore("FILE_DATA");
+        var enc = new TextEncoder();
+        // Godot's IDBFS reads this field with `.getTime()`, so it must be a Date object.
+        var stamp = new Date();
+        var names = Object.keys(texts);
+        // IDBFS creates entries in path order and does not create missing parents, so
+        // the directories holding the files need records of their own (mode 040777).
+        var dirs = {};
+        for (var i = 0; i < names.length; i++) {
+          store.put({ timestamp: stamp, mode: 33206, contents: enc.encode(texts[names[i]]) }, DEMO_DIR + "/" + names[i]);
+          var parents = neededFileDirs(DEMO_DIR + "/" + names[i]);
+          for (var j = 0; j < parents.length; j++) dirs[parents[j]] = true;
+        }
+        for (var dir in dirs) store.put({ timestamp: stamp, mode: 16895 }, dir);
+        if (markerText) store.put({ timestamp: stamp, mode: 33206, contents: enc.encode(markerText) }, DEMO_MARKER);
+        tx.oncomplete = function () { db.close(); resolve(true); };
+        tx.onerror = function () { db.close(); resolve(false); };
+        tx.onabort = function () { db.close(); resolve(false); };
+      };
+    });
+  }
+
+  // The demo's file texts come from the bundled JS file loaded by the <script> tag
+  // near the end of this document; if that failed to load we fall back to the shipped
+  // src/ copies (which the platform serves directly when the generator is saved).
+  function demoBundle() {
+    var p = window.COOKIE_CLICKER_DEMO;
+    return (p && p.files) ? p : null;
+  }
+  function demoVersion() { var p = demoBundle(); return p && p.version ? p.version : 0; }
+  async function demoFileText(name) {
+    var p = demoBundle();
+    if (p && typeof p.files[name] === "string") return p.files[name];
+    var resp = await fetch(DEMO_SRC + name);
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    return await resp.text();
+  }
+  async function demoFileTexts() {
+    var out = {};
+    for (var i = 0; i < DEMO_FILE_NAMES.length; i++) out[DEMO_FILE_NAMES[i]] = await demoFileText(DEMO_FILE_NAMES[i]);
+    return out;
+  }
+  function djb2(s) {
+    var h = 5381;
+    for (var i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+    return (h >>> 0).toString(16);
+  }
+  // True while the project on disk still matches what we last installed, i.e. the user
+  // hasn't edited it - only then is it safe to refresh it with a newer build.
+  async function demoUnmodified(marker) {
+    if (!marker || !marker.hashes) return false;
+    for (var n in marker.hashes) {
+      var cur = await idbReadText(DEMO_DIR + "/" + n);
+      if (cur == null || djb2(cur) !== marker.hashes[n]) return false;
+    }
+    return true;
+  }
+
+  async function demoAllPresent() {
+    for (var i = 0; i < DEMO_FILE_NAMES.length; i++) {
+      if ((await idbReadText(DEMO_DIR + "/" + DEMO_FILE_NAMES[i])) == null) return false;
+    }
+    return true;
+  }
+
+  // Installs the bundled Cookie Clicker project into the editor's filesystem so it
+  // shows up in the project manager, and registers it in the project list. Runs after
+  // editor.init() (persistent FS loaded) and before editor.start() (the project manager
+  // reads projects.cfg at startup). The first install always happens; later builds of
+  // the generator refresh an untouched project, so user edits are never clobbered.
+  async function installDemoProject() {
+    if (!editor) return;
+    var textEnc = new TextEncoder();
+    var version = demoVersion();
+    var meta = await metaGet("seed");
+    var hasProject = !!(await idbReadText(DEMO_DIR + "/project.godot"));
+    var missing = hasProject && !(await demoAllPresent());
+    // Install when the project is absent, unversioned, incomplete, or when a newer
+    // bundle is available AND the user hasn't edited the installed copy.
+    var needInstall = !hasProject || !meta || missing ||
+      (Number(meta.version) !== version && await demoUnmodified(meta));
+    if (needInstall) {
+      var texts;
+      try { texts = await demoFileTexts(); }
+      catch (e) { console.warn("[demo] could not read the bundled project:", e); return; }
+      var hashes = {};
+      for (var i = 0; i < DEMO_FILE_NAMES.length; i++) {
+        var n = DEMO_FILE_NAMES[i];
+        hashes[n] = djb2(texts[n]);
+        editor.copyToFS(DEMO_DIR + "/" + n, textEnc.encode(texts[n]));
+      }
+      var markerText = JSON.stringify({ version: version, hashes: hashes });
+      editor.copyToFS(DEMO_MARKER, textEnc.encode(markerText));
+      // copyToFS only touches the engine's in-memory FS; mirror to IndexedDB so a
+      // project-run engine (which loads its FS from IDB) sees the current files.
+      await idbWriteFiles(texts, markerText);
+      await metaSet("seed", { version: version, hashes: hashes });
+    }
+    // Merge our entry into the project list, keeping whatever is already there.
+    var cfg = await idbReadText(PROJECTS_CFG);
+    var section = "[" + DEMO_DIR + "]";
+    if (!cfg || cfg.indexOf(section) === -1) {
+      var text = (cfg || "").replace(/\s+$/, "");
+      if (text) text += "\n\n";
+      text += section + "\nfavorite=true\n";
+      editor.copyToFS(PROJECTS_CFG, textEnc.encode(text));
+    }
+  }
+
+  // A project-run engine gets its own filesystem, freshly loaded from the persistent
+  // store. If the whole project is already there (the usual case) leave it alone so the
+  // user's edited version runs; otherwise seed it from the bundled copy.
+  async function installDemoInto(engine) {
+    var version = demoVersion();
+    var meta = await metaGet("seed");
+    var present = await demoAllPresent();
+    if (present && meta && Number(meta.version) === version) return;
+    if (present && meta && !(await demoUnmodified(meta))) return;
+    var texts;
+    try { texts = await demoFileTexts(); }
+    catch (e) { console.warn("[demo] could not seed the game filesystem:", e); return; }
+    var textEnc = new TextEncoder();
+    var hashes = {};
+    for (var i = 0; i < DEMO_FILE_NAMES.length; i++) {
+      var n = DEMO_FILE_NAMES[i];
+      hashes[n] = djb2(texts[n]);
+      engine.copyToFS(DEMO_DIR + "/" + n, textEnc.encode(texts[n]));
+    }
+    await metaSet("seed", { version: version, hashes: hashes });
+  }
+
+  function ckBundle() {
+    var p = window.CRIMSON_KEEP_DEMO;
+    return (p && p.files) ? p : null;
+  }
+  function ckVersion() { var p = ckBundle(); return p && p.version ? p.version : 0; }
+  async function ckFileText(name) {
+    var p = ckBundle();
+    if (p && typeof p.files[name] === "string") return p.files[name];
+    var resp = await fetch(CK_SRC + name);
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    return await resp.text();
+  }
+  async function ckFileTexts() {
+    var out = {};
+    for (var i = 0; i < CK_FILE_NAMES.length; i++) out[CK_FILE_NAMES[i]] = await ckFileText(CK_FILE_NAMES[i]);
+    return out;
+  }
+  function b64ToBytes(b64) {
+    var s = atob(b64);
+    var out = new Uint8Array(s.length);
+    for (var i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+    return out;
+  }
+  async function ckBinData(name) {
+    var p = ckBundle();
+    if (p && p.bin && typeof p.bin[name] === "string") return b64ToBytes(p.bin[name]);
+    var resp = await fetch(CK_SRC + name);
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    return new Uint8Array(await resp.arrayBuffer());
+  }
+  async function ckBinAll() {
+    var out = {};
+    for (var i = 0; i < CK_BIN_NAMES.length; i++) out[CK_BIN_NAMES[i]] = await ckBinData(CK_BIN_NAMES[i]);
+    return out;
+  }
+  async function ckUnmodified(marker) {
+    if (!marker || !marker.hashes) return false;
+    for (var n in marker.hashes) {
+      if (n === "project.godot") continue;
+      if (CK_BIN_NAMES.indexOf(n) !== -1) continue;
+      var cur = await idbReadText(CK_DIR + "/" + n);
+      if (cur == null || djb2(cur) !== marker.hashes[n]) return false;
+    }
+    return true;
+  }
+  async function ckAllPresent() {
+    for (var i = 0; i < CK_FILE_NAMES.length; i++) {
+      if ((await idbReadText(CK_DIR + "/" + CK_FILE_NAMES[i])) == null) return false;
+    }
+    return true;
+  }
+  async function ckBinPresent() {
+    var db;
+    try { db = await idbDb(); } catch (e) { return false; }
+    var ok = true;
+    await new Promise(function (resolve) {
+      var tx;
+      try { tx = db.transaction("FILE_DATA", "readonly"); } catch (e) { ok = false; resolve(); return; }
+      var store = tx.objectStore("FILE_DATA");
+      var pending = CK_BIN_NAMES.length;
+      if (!pending) { resolve(); return; }
+      for (var i = 0; i < CK_BIN_NAMES.length; i++) {
+        (function (nm) {
+          var r;
+          try { r = store.get(CK_DIR + "/" + nm); } catch (e) { ok = false; if (--pending === 0) resolve(); return; }
+          r.onsuccess = function () { if (!r.result) ok = false; if (--pending === 0) resolve(); };
+          r.onerror = function () { ok = false; if (--pending === 0) resolve(); };
+        })(CK_BIN_NAMES[i]);
+      }
+    });
+    try { db.close(); } catch (e) {}
+    return ok;
+  }
+  async function idbWriteCkFiles(texts, bindata, markerText) {
+    return new Promise(function (resolve) {
+      var req = indexedDB.open(IDB_NAME);
+      req.onerror = function () { resolve(false); };
+      req.onsuccess = function () {
+        var db = req.result;
+        if (!db.objectStoreNames.contains("FILE_DATA")) { db.close(); resolve(false); return; }
+        var tx = db.transaction("FILE_DATA", "readwrite");
+        var store = tx.objectStore("FILE_DATA");
+        var enc = new TextEncoder();
+        var stamp = new Date();
+        var names = Object.keys(texts);
+        var dirs = {};
+        for (var i = 0; i < names.length; i++) {
+          store.put({ timestamp: stamp, mode: 33206, contents: enc.encode(texts[names[i]]) }, CK_DIR + "/" + names[i]);
+          var parents = neededFileDirs(CK_DIR + "/" + names[i]);
+          for (var j = 0; j < parents.length; j++) dirs[parents[j]] = true;
+        }
+        var bnames = Object.keys(bindata || {});
+        for (var k = 0; k < bnames.length; k++) {
+          store.put({ timestamp: stamp, mode: 33206, contents: bindata[bnames[k]] }, CK_DIR + "/" + bnames[k]);
+          var bparents = neededFileDirs(CK_DIR + "/" + bnames[k]);
+          for (var m = 0; m < bparents.length; m++) dirs[bparents[m]] = true;
+        }
+        for (var dir in dirs) store.put({ timestamp: stamp, mode: 16895 }, dir);
+        if (markerText) store.put({ timestamp: stamp, mode: 33206, contents: enc.encode(markerText) }, CK_MARKER);
+        tx.oncomplete = function () { db.close(); resolve(true); };
+        tx.onerror = function () { db.close(); resolve(false); };
+        tx.onabort = function () { db.close(); resolve(false); };
+      };
+    });
+  }
+  async function installCkProject() {
+    if (!editor) return;
+    var textEnc = new TextEncoder();
+    var version = ckVersion();
+    var meta = await metaGet("ck_seed");
+    var hasProject = !!(await idbReadText(CK_DIR + "/project.godot"));
+    var missing = hasProject && (!(await ckAllPresent()) || !(await ckBinPresent()));
+    var needInstall = !hasProject || !meta || missing ||
+      (Number(meta.version) !== version && await ckUnmodified(meta));
+    if (needInstall) {
+      var texts, bindata;
+      try { texts = await ckFileTexts(); bindata = await ckBinAll(); }
+      catch (e) { console.warn("[crimson-keep] could not read the bundled project:", e); return; }
+      var hashes = {};
+      for (var i = 0; i < CK_FILE_NAMES.length; i++) {
+        var n = CK_FILE_NAMES[i];
+        hashes[n] = djb2(texts[n]);
+        editor.copyToFS(CK_DIR + "/" + n, textEnc.encode(texts[n]));
+      }
+      for (var b = 0; b < CK_BIN_NAMES.length; b++) {
+        editor.copyToFS(CK_DIR + "/" + CK_BIN_NAMES[b], bindata[CK_BIN_NAMES[b]]);
+      }
+      var markerText = JSON.stringify({ version: version, hashes: hashes });
+      editor.copyToFS(CK_MARKER, textEnc.encode(markerText));
+      await idbWriteCkFiles(texts, bindata, markerText);
+      await metaSet("ck_seed", { version: version, hashes: hashes });
+    }
+    var cfg = await idbReadText(PROJECTS_CFG);
+    var section = "[" + CK_DIR + "]";
+    if (!cfg || cfg.indexOf(section) === -1) {
+      var text = (cfg || "").replace(/\s+$/, "");
+      if (text) text += "\n\n";
+      text += section + "\nfavorite=true\n";
+      editor.copyToFS(PROJECTS_CFG, textEnc.encode(text));
+    }
+  }
+  async function installCkInto(engine) {
+    var version = ckVersion();
+    var meta = await metaGet("ck_seed");
+    var present = (await ckAllPresent()) && (await ckBinPresent());
+    if (present && meta && Number(meta.version) === version) return;
+    if (present && meta && !(await ckUnmodified(meta))) return;
+    var texts, bindata;
+    try { texts = await ckFileTexts(); bindata = await ckBinAll(); }
+    catch (e) { console.warn("[crimson-keep] could not seed the game filesystem:", e); return; }
+    var textEnc = new TextEncoder();
+    var hashes = {};
+    for (var i = 0; i < CK_FILE_NAMES.length; i++) {
+      var n = CK_FILE_NAMES[i];
+      hashes[n] = djb2(texts[n]);
+      engine.copyToFS(CK_DIR + "/" + n, textEnc.encode(texts[n]));
+    }
+    for (var b = 0; b < CK_BIN_NAMES.length; b++) {
+      engine.copyToFS(CK_DIR + "/" + CK_BIN_NAMES[b], bindata[CK_BIN_NAMES[b]]);
+    }
+    await metaSet("ck_seed", { version: version, hashes: hashes });
+  }
+
+  // ---- js-bridge demo: GDScript <-> JavaScript ES modules via JavaScriptBridge ----
+  // Mirrors the Cookie Clicker installer one-to-one (shared djb2/meta/IDB helpers).
+  function jbBundle() {
+    var p = window.JS_BRIDGE_DEMO;
+    return (p && p.files) ? p : null;
+  }
+  function jbVersion() { var p = jbBundle(); return p && p.version ? p.version : 0; }
+  async function jbFileText(name) {
+    var p = jbBundle();
+    if (p && typeof p.files[name] === "string") return p.files[name];
+    var resp = await fetch(JB_SRC + name);
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    return await resp.text();
+  }
+  async function jbFileTexts() {
+    var out = {};
+    for (var i = 0; i < JB_FILE_NAMES.length; i++) out[JB_FILE_NAMES[i]] = await jbFileText(JB_FILE_NAMES[i]);
+    return out;
+  }
+  async function jbUnmodified(marker) {
+    if (!marker || !marker.hashes) return false;
+    for (var n in marker.hashes) {
+      var cur = await idbReadText(JB_DIR + "/" + n);
+      if (cur == null || djb2(cur) !== marker.hashes[n]) return false;
+    }
+    return true;
+  }
+  async function jbAllPresent() {
+    for (var i = 0; i < JB_FILE_NAMES.length; i++) {
+      if ((await idbReadText(JB_DIR + "/" + JB_FILE_NAMES[i])) == null) return false;
+    }
+    return true;
+  }
+  function idbWriteJbFiles(texts, markerText) {
+    return new Promise(function (resolve) {
+      var req = indexedDB.open(IDB_NAME);
+      req.onerror = function () { resolve(false); };
+      req.onsuccess = function () {
+        var db = req.result;
+        if (!db.objectStoreNames.contains("FILE_DATA")) { db.close(); resolve(false); return; }
+        var tx = db.transaction("FILE_DATA", "readwrite");
+        var store = tx.objectStore("FILE_DATA");
+        var enc = new TextEncoder();
+        var stamp = new Date();
+        var names = Object.keys(texts);
+        var dirs = {};
+        for (var i = 0; i < names.length; i++) {
+          store.put({ timestamp: stamp, mode: 33206, contents: enc.encode(texts[names[i]]) }, JB_DIR + "/" + names[i]);
+          var parents = neededFileDirs(JB_DIR + "/" + names[i]);
+          for (var j = 0; j < parents.length; j++) dirs[parents[j]] = true;
+        }
+        for (var dir in dirs) store.put({ timestamp: stamp, mode: 16895 }, dir);
+        if (markerText) store.put({ timestamp: stamp, mode: 33206, contents: enc.encode(markerText) }, JB_MARKER);
+        tx.oncomplete = function () { db.close(); resolve(true); };
+        tx.onerror = function () { db.close(); resolve(false); };
+        tx.onabort = function () { db.close(); resolve(false); };
+      };
+    });
+  }
+  async function installJbProject() {
+    if (!editor) return;
+    var textEnc = new TextEncoder();
+    var version = jbVersion();
+    var meta = await metaGet("jb_seed");
+    var hasProject = !!(await idbReadText(JB_DIR + "/project.godot"));
+    var missing = hasProject && !(await jbAllPresent());
+    var needInstall = !hasProject || !meta || missing ||
+      (Number(meta.version) !== version && await jbUnmodified(meta));
+    if (needInstall) {
+      var texts;
+      try { texts = await jbFileTexts(); }
+      catch (e) { console.warn("[js-bridge] could not read the bundled project:", e); return; }
+      var hashes = {};
+      for (var i = 0; i < JB_FILE_NAMES.length; i++) {
+        var n = JB_FILE_NAMES[i];
+        hashes[n] = djb2(texts[n]);
+        editor.copyToFS(JB_DIR + "/" + n, textEnc.encode(texts[n]));
+      }
+      var markerText = JSON.stringify({ version: version, hashes: hashes });
+      editor.copyToFS(JB_MARKER, textEnc.encode(markerText));
+      await idbWriteJbFiles(texts, markerText);
+      await metaSet("jb_seed", { version: version, hashes: hashes });
+    }
+    var cfg = await idbReadText(PROJECTS_CFG);
+    var section = "[" + JB_DIR + "]";
+    if (!cfg || cfg.indexOf(section) === -1) {
+      var text = (cfg || "").replace(/\s+$/, "");
+      if (text) text += "\n\n";
+      text += section + "\nfavorite=true\n";
+      editor.copyToFS(PROJECTS_CFG, textEnc.encode(text));
+    }
+  }
+  async function installJbInto(engine) {
+    var version = jbVersion();
+    var meta = await metaGet("jb_seed");
+    var present = await jbAllPresent();
+    if (present && meta && Number(meta.version) === version) return;
+    if (present && meta && !(await jbUnmodified(meta))) return;
+    var texts;
+    try { texts = await jbFileTexts(); }
+    catch (e) { console.warn("[js-bridge] could not seed the game filesystem:", e); return; }
+    var textEnc = new TextEncoder();
+    var hashes = {};
+    for (var i = 0; i < JB_FILE_NAMES.length; i++) {
+      var n = JB_FILE_NAMES[i];
+      hashes[n] = djb2(texts[n]);
+      engine.copyToFS(JB_DIR + "/" + n, textEnc.encode(texts[n]));
+    }
+    await metaSet("jb_seed", { version: version, hashes: hashes });
+  }
+
+  async function boot() {
+    if (booting) return;
+    lockWake();
+    booting = true;
+    if (shutdownPromise) { try { await shutdownPromise; } catch (e) {} }
+    if (bootCancelled) bootCancelled = false;
+    showEditorPane();
+    overlay.hidden = false;
+    try {
+      updateVersionText();
+      updateLinks();
+      showOverlay("Fetching the engine", "Godot " + labelFor(currentVersion()) + " \u2014 checking the browser cache\u2026",
+        { progress: true, indeterminate: true });
+
+      var wasmAsset = ensureAsset(WASM_FILE, function (got) {
+        if (bootCancelled) return;
+        showOverlay("Downloading the engine", fmtMB(got) + " downloaded \u2014 about 92 MB in total, this only happens once.",
+          { progress: true, indeterminate: true });
+      });
+      var jsAsset = ensureAsset(JS_FILE, null);
+      var workletAssets = WORKLET_FILES.map(function (n) { return blobUrlFor(n); });
+
+      var worklets = {};
+      for (var i = 0; i < WORKLET_FILES.length; i++) {
+        worklets[WORKLET_FILES[i]] = await workletAssets[i];
+      }
+      engineAssets = { worklets: worklets };
+
+      await jsAsset; // ensures the script is cached before we load it
+      var wasmInfo = await wasmAsset;
+      editorWasmBytes = wasmInfo.bytes || 0;
+      wasmGetter = function () { return wasmInfo.get(); };
+
+      showOverlay("Starting the engine", "Instantiating WebAssembly\u2026", { progress: true, indeterminate: true });
+
+      var Engine = await loadEngineScript();
+      patchEnginePrototype(Engine);
+      installFetchHook();
+      installWorkletHook();
+
+      await repairLegacyIdb();
+      editor = new Engine(editorConfig());
+      await editor.init("godot.editor");
+      if (bootCancelled) return;
+      try { editor.copyToFS("/home/web_user/keep", new Uint8Array()); } catch (e) { /* already there */ }
+      await installDemoProject();
+      await installCkProject();
+      await installJbProject();
+      if (bootCancelled) return;
+
+      showOverlay("Opening the editor", "Loading the project manager\u2026", { progress: true, indeterminate: true });
+      sizeAllCanvases();
+      await editor.start({ args: ["--project-manager", "--single-window"] });
+      if (bootCancelled) return;
+      hideOverlay();
+      showEditorTab();
+      editorCanvas.focus();
+      updateCacheText();
+    } catch (err) {
+      console.error(err);
+      showBootError(err);
+    } finally {
+      booting = false;
+      if (!editorOpen) unlockWake();
+    }
+  }
+
+  var bootCancelled = false;
+
+  function waitForEditorExit(timeoutMs) {
+    return new Promise(function (resolve) {
+      var done = false;
+      var finish = function () { if (done) return; done = true; resolve(); };
+      if (!editor) { finish(); return; }
+      OnEditorExit = finish;
+      setTimeout(finish, timeoutMs);
+    });
+  }
+
+  var shutdownPromise = null;
+
+  // Serialized: any number of callers share one teardown, and boot() waits for it
+  // so a relaunch clicked while the old engine is still exiting can't race it.
+  function shutdown() {
+    if (shutdownPromise) return shutdownPromise;
+    shutdownPromise = doShutdown().then(clearShutdown, clearShutdown);
+    return shutdownPromise;
+  }
+  function clearShutdown() { shutdownPromise = null; }
+
+  async function doShutdown() {
+    bootCancelled = true;
+    try { if (game) game.requestQuit(); } catch (e) {}
+    game = null;
+    setGameTabEnabled(false);
+    if (!editor) { wasmGetter = null; return; }
+    var exited = waitForEditorExit(2500);
+    try { editor.requestQuit(); } catch (e) {}
+    await exited;
+    editor = null;
+    try { if (window.Engine && window.Engine.unload) window.Engine.unload(); } catch (e) {}
+    wasmGetter = null;
+    replaceCanvas(editorCanvas);
+    replaceCanvas(gameCanvas);
+    bootCancelled = false;
+  }
+
+  async function goHome() {
+    showHomePane();
+    hideOverlay();
+    unlockWake();
+    await shutdown();
+    updateCacheText();
+  }
+
+  async function restart() {
+    await shutdown();
+    boot();
+  }
+
+  /* ------------------------- cache helpers ----------------------- */
+
+  async function updateCacheText() {
+    try {
+      if (!navigator.storage || !navigator.storage.estimate) { cacheText.textContent = ""; return; }
+      var est = await navigator.storage.estimate();
+      cacheText.textContent = "engine cache: " + fmtMB(est.usage || 0) + " used";
+    } catch (e) { cacheText.textContent = ""; }
+  }
+
+  async function clearEngineCache() {
+    try { if (typeof caches !== "undefined") await caches.delete(CACHE_NAME); } catch (e) {}
+    memoryFallback = {};
+    cachePromise = null;
+    updateCacheText();
+    alert("Cached engine files cleared. The next start will download the engine again.");
+  }
+
+  function clearProjectData() {
+    if (!confirm("Delete all projects and editor settings saved in this browser?\nThis cannot be undone.")) return;
+    try {
+      var req = indexedDB.deleteDatabase("/home/web_user");
+      indexedDB.deleteDatabase(META_DB);
+      req.onsuccess = function () { alert("Saved projects deleted."); };
+      req.onerror = function () { alert("Could not delete the saved projects."); };
+    } catch (e) { alert("Could not delete the saved projects."); }
+  }
+
+  /* --------------------------- wiring ---------------------------- */
+
+  $("launchBtn").addEventListener("click", boot);
+  reloadBtn.addEventListener("click", function () { restart(); });
+  homeBtn.addEventListener("click", function () { goHome(); });
+  brandBtn.addEventListener("click", function () { if (editorOpen) goHome(); });
+  closeGameBtn.addEventListener("click", function () { if (game) game.requestQuit(); });
+  tabEditorBtn.addEventListener("click", showEditorTab);
+  tabGameBtn.addEventListener("click", function () { if (game) showGameTab(); });
+  $("clearCacheBtn").addEventListener("click", clearEngineCache);
+  $("clearDataBtn").addEventListener("click", clearProjectData);
+
+  versionSel.addEventListener("change", function () {
+    saveVersion(versionSel.value);
+    updateVersionText();
+    updateLinks();
+    updateCacheText();
+    if (editorOpen) restart();
+  });
+
+  var fsActive = false;
+  function refreshFsLabel() {
+    fsActive = !!document.fullscreenElement || document.body.classList.contains("zen");
+    fsBtn.innerHTML = '<span class="ico">&#9974;</span>' + (fsActive ? "Exit full" : "Fullscreen");
+  }
+  fsBtn.addEventListener("click", function () {
+    try {
+      if (!document.fullscreenElement && !fsActive) {
+        var p = appEl.requestFullscreen ? appEl.requestFullscreen({ navigationUI: "hide" }) : null;
+        if (p && p.catch) p.catch(function () { document.body.classList.add("zen"); refreshFsLabel(); });
+        else if (!appEl.requestFullscreen) { document.body.classList.add("zen"); refreshFsLabel(); }
+      } else if (document.fullscreenElement) {
+        document.exitFullscreen();
+      } else {
+        document.body.classList.remove("zen"); refreshFsLabel();
+      }
+      setTimeout(sizeAllCanvases, 120);
+    } catch (e) {
+      document.body.classList.toggle("zen");
+      refreshFsLabel();
+      setTimeout(sizeAllCanvases, 120);
+    }
+  });
+  document.addEventListener("fullscreenchange", function () { refreshFsLabel(); setTimeout(sizeAllCanvases, 120); });
+
+  /* --------------------------- init ------------------------------ */
+
+  var autoStored = null;
+  try { autoStored = localStorage.getItem(AUTO_KEY); } catch (e) {}
+  autoChk.checked = autoStored === null ? true : autoStored === "1";
+  autoChk.addEventListener("change", function () {
+    try { localStorage.setItem(AUTO_KEY, autoChk.checked ? "1" : "0"); } catch (e) {}
+  });
+
+  ensureViewportMeta();
+  var menuBtn = $("menuBtn"), kbBtn = $("kbBtn"), kbHack = $("kbHack");
+  if (MOBILE && window.innerWidth <= 720) document.body.classList.remove("navOpen");
+  if (menuBtn) menuBtn.addEventListener("click", function () {
+    var open = document.body.classList.toggle("navOpen");
+    menuBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+  if (kbBtn) kbBtn.addEventListener("click", function () {
+    document.body.classList.add("navOpen");
+    if (menuBtn) menuBtn.setAttribute("aria-expanded", "true");
+    try { kbHack.focus({ preventScroll: true }); } catch (e) { try { kbHack.focus(); } catch (e2) {} }
+    try { if (kbHack) { kbHack.value = " "; kbHack.setSelectionRange(1, 1); } } catch (e) {}
+    if (editorOpen && editorCanvas) { try { editorCanvas.focus({ preventScroll: true }); } catch (e) { try { editorCanvas.focus(); } catch (e2) {} } try { kbHack.focus(); } catch (e) {} }
+  });
+  try {
+    var mq = window.matchMedia("(max-width:720px)");
+    var syncNav = function () { if (!mq.matches) document.body.classList.remove("navOpen"); };
+    if (mq.addEventListener) mq.addEventListener("change", syncNav);
+  } catch (e) {}
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) setTimeout(sizeAllCanvases, 120); });
+
+  var supported = runChecks();
+  updateLinks();
+  updateVersionText();
+  updateCacheText();
+  stubServiceWorkerProbe();
+
+  var metered = false;
+  try {
+    var conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    metered = !!(conn && (conn.saveData || /^(slow-2g|2g)$/.test(conn.effectiveType || "")));
+  } catch (e) {}
+  var wantAuto = autoChk.checked && supported;
+  if (wantAuto && (MOBILE || metered) && window.innerWidth <= 820) {
+    autoChk.checked = false;
+    try { localStorage.setItem(AUTO_KEY, "0"); } catch (e) {}
+    var v = $("verdict");
+    if (v) { v.className = "verdict warn"; v.textContent = "Tap Start when you're on Wi-Fi \u2014 the first run downloads ~92 MB."; }
+  } else if (wantAuto) boot();
+})();
+</script>
+
+</body>
+</html>
